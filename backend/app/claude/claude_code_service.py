@@ -298,6 +298,7 @@ def build_options(
     oauth_token: str | None = None,
     config_dir: str | None = None,
     az: AzContext | None = None,
+    model: str | None = None,
 ) -> ClaudeAgentOptions:
     env = {"ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": ""}
     if az is not None:
@@ -326,6 +327,7 @@ def build_options(
         scratch.mkdir(exist_ok=True)
         cwd = str(scratch)
     return ClaudeAgentOptions(
+        model=model or None,
         cwd=cwd,
         system_prompt=(REVIEW_PROMPT if review_mode else GENERAL_PROMPT)
         + (AZ_PROMPT.format(org=az.org, policy=describe(az.policy)) if az is not None else ""),
@@ -361,10 +363,11 @@ class ClaudeCodeService:
         review_mode: bool = False,
         oauth_token: str | None = None,
         az: AzContext | None = None,
+        model: str | None = None,
     ) -> str:
         root = resolve_repo(self._repo_path)
         config_dir = tempfile.mkdtemp(prefix="claude-user-") if oauth_token else None
-        options = build_options(root, mcp_server, azure_tools, review_mode, oauth_token, config_dir, az)
+        options = build_options(root, mcp_server, azure_tools, review_mode, oauth_token, config_dir, az, model)
         prompt = build_user_prompt(question, context)
         async with self._sem:
             try:

@@ -47,6 +47,7 @@ class Settings:
     az_enabled: bool
     az_policy: str
     shared_claude_tokens: tuple[tuple[str, str], ...]
+    claude_models: tuple[tuple[str, str, str], ...] = ()  # (id, label, note); the first one is the default
     session_ttl_seconds: int = 30 * 24 * 60 * 60  # idle time before a person must sign in again
     session_dir: str = ""  # where signed-in sessions are saved (encrypted)
 
@@ -103,6 +104,29 @@ def _parse_shared_tokens(raw: str) -> tuple[tuple[str, str], ...]:
     return tuple(pairs)
 
 
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{1,60}$")
+_MODEL_NOTES = {
+    "haiku": "Fastest, for quick questions",
+    "sonnet": "Balanced: good for most reviews",
+    "opus": "Deepest thinking, for big or risky PRs",
+}
+
+
+def _parse_models(raw: str) -> tuple[tuple[str, str, str], ...]:
+    """CLAUDE_MODELS="sonnet=Claude Sonnet;opus=Claude Opus" -> (("sonnet", "Claude Sonnet", note), ...). First is the default.
+
+    Use the aliases sonnet/opus/haiku (always the newest the installed Claude Code knows) or a full model id."""
+    items: list[tuple[str, str, str]] = []
+    for entry in re.split(r"[;\n]+", raw or "sonnet=Claude Sonnet;opus=Claude Opus;haiku=Claude Haiku"):
+        model_id, _, label = entry.strip().partition("=")
+        model_id, label = model_id.strip(), label.strip()
+        if _MODEL_ID_RE.match(model_id):
+            items.append((model_id, label or model_id, _MODEL_NOTES.get(model_id, "")))
+        elif entry.strip():
+            logger.warning("Ignoring a malformed CLAUDE_MODELS entry")
+    return tuple(items) or (("sonnet", "Claude Sonnet", _MODEL_NOTES["sonnet"]),)
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     secret = os.getenv("SESSION_SECRET", "").strip()
@@ -125,6 +149,7 @@ def get_settings() -> Settings:
         # Browsers treat http://localhost as a secure context, so Secure cookies work locally.
         cookie_secure=_bool("COOKIE_SECURE", True),
         shared_claude_tokens=_parse_shared_tokens(os.getenv("SHARED_CLAUDE_TOKENS", "")),
+        claude_models=_parse_models(os.getenv("CLAUDE_MODELS", "")),
         az_enabled=_bool("AZ_ENABLED", False) or _auth_mode(os.getenv("AUTH_MODE", "")) == "az_login",
         az_policy=_az_policy(os.getenv("AZ_POLICY", "read")),
         require_user_claude_token=_bool("REQUIRE_USER_CLAUDE_TOKEN", False),

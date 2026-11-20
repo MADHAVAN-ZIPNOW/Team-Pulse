@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..auth.dependencies import get_current_session, require_same_origin
@@ -72,3 +73,25 @@ def effective_claude_token(session: Session, settings: Settings) -> str | None:
             if label == session.claude_source:
                 return token
     return session.claude_token
+
+
+class ModelInfo(BaseModel):
+    id: str
+    label: str
+    note: str
+
+
+class ModelList(BaseModel):
+    models: list[ModelInfo]
+    default: str
+
+
+@router.get("/models", response_model=ModelList)
+async def list_models(
+    session: Annotated[Session, Depends(get_current_session)], settings: Annotated[Settings, Depends(get_settings)]
+) -> ModelList:
+    """The Claude models a person can pick for their questions (set by CLAUDE_MODELS)."""
+    return ModelList(
+        models=[ModelInfo(id=i, label=label, note=note) for i, label, note in settings.claude_models],
+        default=settings.claude_models[0][0],
+    )

@@ -4,6 +4,8 @@ import remarkGfm from "remark-gfm";
 import { api, type AskScope } from "../lib/api";
 import { useAsync } from "../hooks/useAsync";
 import { ErrorState, MsLogo } from "./common";
+import { ModelPicker } from "./ModelPicker";
+import { VOICE_LANGS, useSpeechInput, useSpeechOutput, type VoiceLang } from "../hooks/useVoice";
 import { ClaudeAccount } from "./ClaudeAccount";
 import { AzAccount } from "./AzAccount";
 
@@ -46,6 +48,28 @@ function CopilotBadge({ size = 28 }: { size?: number }) {
     >
       <MsLogo size={Math.round(size * 0.5)} />
     </span>
+  );
+}
+
+function ListenButton({ id, text, voice }: { id: string; text: string; voice: ReturnType<typeof useSpeechOutput> }) {
+  if (!voice.supported) return null;
+  const speaking = voice.speakingId === id;
+  return (
+    <button
+      onClick={() => (speaking ? voice.stop() : voice.speak(id, text))}
+      className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-950 hover:text-slate-200"
+      aria-label={speaking ? "Stop reading" : "Read this answer aloud"}
+    >
+      {speaking ? "■ Stop" : "🔊 Listen"}
+    </button>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v4" />
+    </svg>
   );
 }
 
@@ -119,6 +143,10 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
   const [startedAt, setStartedAt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [showAccounts, setShowAccounts] = useState(false);
+  const [modelChoice, setModelChoice] = useState(() => { try { return localStorage.getItem("pra_model") ?? ""; } catch { return ""; } });
+  const [voiceLang, setVoiceLang] = useState<VoiceLang>(() => {
+    try { return localStorage.getItem("pra_voice_lang") === "ta-IN" ? "ta-IN" : "en-IN"; } catch { return "en-IN"; }
+  });
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -142,6 +170,12 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
   }, [input]);
 
   const claude = useAsync(() => api.claudeStatus(), []);
+  const modelList = useAsync(() => api.claudeModels(), []);
+  const model = modelList.data?.models.some((m) => m.id === modelChoice) ? modelChoice : modelList.data?.default ?? "";
+  const mic = useSpeechInput(voiceLang, setInput);
+  const voice = useSpeechOutput(voiceLang);
+  const pickModel = (id: string) => { setModelChoice(id); try { localStorage.setItem("pra_model", id); } catch { /* storage may be blocked */ } };
+  const pickLang = (l: VoiceLang) => { setVoiceLang(l); try { localStorage.setItem("pra_voice_lang", l); } catch { /* storage may be blocked */ } };
   const az = useAsync(() => api.azStatus(), []);
   const needsToken = !!claude.data?.required && claude.data.source === "own" && !claude.data.hasToken;
   const disabled = scope === null || busy || needsToken;
@@ -156,10 +190,12 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
     setLastQuestion(q);
     if (addUserMessage) setMessages((m) => [...m, { role: "user", text: q }]);
     setInput("");
+    mic.stop();
+    voice.stop();
     setStartedAt(Date.now());
     setBusy(true);
     try {
-      const res = await api.ask(scope, prId, q);
+      const res = await api.ask(scope, prId, q, model);
       const note = res.contextTruncated
         ? `Analyzed ${res.filesAnalyzed} of ${res.filesTotal} changed files (some content was truncated).`
         : undefined;
@@ -262,6 +298,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
                     {m.note && <p className="mt-2 text-xs text-amber-400">{m.note}</p>}
                     <div className="mt-2 flex items-center gap-1 border-t border-slate-800 pt-1.5">
                       <CopyButton text={m.text} />
+                      <ListenButton id={String(i)} text={m.text} voice={voice} />
                       <span className="ml-auto text-[11px] text-slate-600">AI-generated. Check important findings before acting.</span>
                     </div>
                   </div>
@@ -308,6 +345,20 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
               placeholder={needsToken ? "Connect your Claude account first" : scope === null ? "Select a project first" : `Message Claude about ${target}…`}
               className="no-ring max-h-[150px] min-h-[28px] flex-1 resize-none bg-transparent py-1 text-sm text-slate-100 outline-none placeholder:text-slate-500 disabled:opacity-50"
             />
+            {mic.supported && (
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => (mic.listening ? mic.stop() : mic.start(input))}
+                aria-label={mic.listening ? "Stop voice input" : "Speak your question"}
+                title={mic.listening ? "Stop" : `Speak your question (${voiceLang === "ta-IN" ? "Tamil" : "English"})`}
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition disabled:opacity-40 ${
+                  mic.listening ? "mic-live border-red-400 bg-red-950 text-red-400" : "border-slate-700 text-slate-400 hover:bg-slate-950"
+                }`}
+              >
+                <MicIcon />
+              </button>
+            )}
             <button
               type="submit"
               disabled={disabled || !input.trim()}
@@ -319,9 +370,29 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
               </svg>
             </button>
           </div>
-          <p className="mt-1.5 text-center text-[11px] text-slate-600">
-            Enter to send · Shift+Enter for a new line{input.length > MAX_LEN * 0.8 ? ` · ${input.length}/${MAX_LEN}` : ""}
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {modelList.data && <ModelPicker models={modelList.data.models} value={model} onChange={pickModel} disabled={busy} />}
+            {(mic.supported || voice.supported) && (
+              <div className="flex h-8 items-center overflow-hidden rounded-full border border-slate-700 text-xs" role="group" aria-label="Voice language">
+                {VOICE_LANGS.map((l) => (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => pickLang(l.id)}
+                    aria-pressed={voiceLang === l.id}
+                    title={`Voice language: ${l.label}`}
+                    className={`px-2.5 py-1 ${voiceLang === l.id ? "bg-sky-900 font-medium text-slate-100" : "text-slate-500 hover:bg-slate-950"}`}
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <span className="ml-auto text-[11px] text-slate-600">
+              {mic.listening ? "Listening… speak now" : `Enter to send · Shift+Enter for a new line${input.length > MAX_LEN * 0.8 ? ` · ${input.length}/${MAX_LEN}` : ""}`}
+            </span>
+          </div>
+          {mic.error && <p className="mt-1 text-xs text-red-400" role="alert">{mic.error}</p>}
         </form>
       </div>
     </div>

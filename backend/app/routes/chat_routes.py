@@ -53,6 +53,9 @@ async def ask(
     settings: Annotated[Settings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_current_session)],
 ) -> AskResponse:
+    allowed_models = {i for i, _, _ in settings.claude_models}
+    if body.model is not None and body.model not in allowed_models:
+        raise HTTPException(status_code=422, detail="That Claude model is not available.")
     claude_token = effective_claude_token(session, settings)
     if settings.require_user_claude_token and not claude_token:
         raise HTTPException(status_code=400, detail="Connect your own Claude account first (paste your Claude token above the chat).")
@@ -94,6 +97,7 @@ async def ask(
             body.question, context_text, mcp_server=server, azure_tools=tool_names, review_mode=pr_id is not None,
             oauth_token=claude_token,
             az=az,
+            model=body.model or settings.claude_models[0][0],
         )
     except ClaudeCodeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

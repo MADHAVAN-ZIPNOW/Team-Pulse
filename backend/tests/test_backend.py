@@ -645,3 +645,23 @@ def test_coverage_line_blocks_stopping_early_until_every_file_is_read():
     state.update(claimed={"/a", "/b", "/c"}, read={"/a", "/b", "/c"}, notes={"/b": "cut"})
     done = _coverage(state)
     assert "read 3 of 3" in done and "\nALL FILES READ." in done and "/b" in done
+
+
+def test_model_list_default_and_only_listed_models_are_accepted(monkeypatch):
+    from pathlib import Path
+
+    from app.claude.claude_code_service import build_options
+    from app.main import create_app
+
+    monkeypatch.setenv("CLAUDE_MODELS", "sonnet=Claude Sonnet;opus=Claude Opus;bad model!=x")
+    get_settings.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/api/claude/models").status_code == 401            # signed-in people only
+        _authed_client(app, client)
+        data = client.get("/api/claude/models").json()
+        assert [m["id"] for m in data["models"]] == ["sonnet", "opus"] and data["default"] == "sonnet"   # bad entry dropped
+        r = client.post("/api/ask", json=valid_body(model="gpt-4"))
+        assert r.status_code == 422 and "not available" in r.json()["detail"]
+    assert build_options(Path("."), model="opus").model == "opus"
+    assert build_options(Path(".")).model is None

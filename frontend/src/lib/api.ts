@@ -37,6 +37,8 @@ export interface AskResponse {
 }
 export interface ClaudeStatus { required: boolean; hasToken: boolean; source: string; pool: string[] }
 export interface AzStatus { enabled: boolean; policy: string; policyText: string; signedIn: boolean; user?: string | null; managedByLogin?: boolean }
+export interface ClaudeModel { id: string; label: string; note: string }
+export interface ClaudeModels { models: ClaudeModel[]; default: string }
 export interface AskScope { organization: string; project: string; repository?: string }
 export interface PrRef { organization: string; project: string; repository: string }
 
@@ -72,6 +74,7 @@ export const api = {
   azLogin: () => request<{ code: string; url: string }>("/api/az/login", { method: "POST" }),
   azLogout: () => request<void>("/api/az/login", { method: "DELETE" }),
   claudeStatus: () => request<ClaudeStatus>("/api/claude/status"),
+  claudeModels: () => request<ClaudeModels>("/api/claude/models"),
   saveClaudeToken: (token: string) =>
     request<void>("/api/claude/token", {
       method: "PUT",
@@ -95,10 +98,10 @@ export const api = {
   commits: (id: number, r: PrRef) => request<Commit[]>(prPath(id, r, "/commits")),
   comments: (id: number, r: PrRef) => request<CommentThread[]>(prPath(id, r, "/comments")),
   /** Ask about a PR (repository + pullRequestId), a repository, or the whole project. */
-  ask: (scope: AskScope, pullRequestId: number | null, question: string) =>
+  ask: (scope: AskScope, pullRequestId: number | null, question: string, model?: string) =>
     request<AskResponse>("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...scope, pullRequestId: pullRequestId ?? undefined, question }),
+      body: JSON.stringify({ ...scope, pullRequestId: pullRequestId ?? undefined, question, model: model || undefined }),
     }),
 };

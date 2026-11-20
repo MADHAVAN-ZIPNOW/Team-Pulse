@@ -20,6 +20,7 @@ class AskRequest(CamelModel):
     repository: NameStr | None = None
     pull_request_id: int | None = Field(default=None, ge=1, le=2_147_483_647)
     question: QuestionStr
+    model: str | None = Field(default=None, max_length=64)  # one of the ids from GET /api/claude/models
 
     @model_validator(mode="after")
     def _pr_needs_repository(self) -> "AskRequest":
