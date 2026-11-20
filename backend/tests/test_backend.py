@@ -261,7 +261,7 @@ def test_attachment_text_extraction():
 
 
 # ---------------------------------------------------------------- per-user Claude account
-GOOD_TOKEN = "sk-ant-oat01-" + "A1b2C3d4" * 6
+GOOD_TOKEN = "sk-ant-oat01-" + ("A1b2C3d4" * 12)[:95]  # real `setup-token` tokens are 108 characters
 
 
 @pytest.mark.parametrize("token,ok", [(GOOD_TOKEN, True), ("  " + GOOD_TOKEN + "  ", True), ("sk-ant-short", False),
