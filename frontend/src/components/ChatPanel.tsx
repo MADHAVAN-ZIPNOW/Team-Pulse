@@ -67,6 +67,23 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** Microsoft four-square logo whose squares light up one after another while Claude works. */
+function MsLoader({ size = 26 }: { size?: number }) {
+  const colours = ["#f25022", "#7fba00", "#ffb900", "#00a4ef"]; // clockwise from top-left
+  const place = ["top-0 left-0", "top-0 right-0", "bottom-0 right-0", "bottom-0 left-0"];
+  return (
+    <span className="relative inline-block" style={{ width: size, height: size }} aria-hidden>
+      {colours.map((c, i) => (
+        <span
+          key={c}
+          className={`ms-square absolute ${place[i]}`}
+          style={{ background: c, width: size * 0.46, height: size * 0.46, animationDelay: `${i * 0.25}s` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 function Thinking({ startedAt }: { startedAt: number }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -74,20 +91,22 @@ function Thinking({ startedAt }: { startedAt: number }) {
     return () => clearInterval(t);
   }, []);
   const secs = Math.floor((now - startedAt) / 1000);
-  const stage = STAGES[Math.min(Math.floor(secs / 8), STAGES.length - 1)];
+  const current = Math.min(Math.floor(secs / 8), STAGES.length - 1);
   return (
-    <div className="flex gap-3">
-      <CopilotBadge />
-      <div className="pt-1">
-        <div className="flex items-center gap-1.5" aria-hidden>
-          {[0, 1, 2].map((i) => (
-            <span key={i} className="h-2 w-2 animate-bounce rounded-full bg-[#7160e8]" style={{ animationDelay: `${i * 150}ms` }} />
+    <div className="flex gap-3" role="status">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center"><MsLoader /></span>
+      <div className="min-w-0 flex-1">
+        <ul className="space-y-1 text-sm">
+          {STAGES.slice(0, current + 1).map((s, i) => (
+            <li key={s} className={i === current ? "font-medium text-slate-200" : "text-slate-500"}>
+              <span className="mr-2 inline-block w-3 text-center">{i === current ? "›" : "✓"}</span>
+              {s}
+              {i === current && <span className="ml-2 text-xs font-normal text-slate-600">{secs}s</span>}
+            </li>
           ))}
-        </div>
-        <p className="mt-2 text-sm text-slate-500" role="status">
-          {stage} <span className="text-slate-600">{secs}s</span>
-        </p>
-        {secs > 20 && <p className="text-xs text-slate-600">Big reviews can take a few minutes. You can keep this page open.</p>}
+        </ul>
+        <div className="ms-bar mt-3 h-[3px] w-full max-w-xs overflow-hidden rounded-full bg-slate-800" aria-hidden />
+        {secs > 20 && <p className="mt-2 text-xs text-slate-600">Big reviews can take a few minutes. You can keep this page open.</p>}
       </div>
     </div>
   );
@@ -99,6 +118,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
   const [busy, setBusy] = useState(false);
   const [startedAt, setStartedAt] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [showAccounts, setShowAccounts] = useState(false);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -154,7 +174,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
   const empty = messages.length === 0 && !busy;
 
   return (
-    <div className="flex h-[calc(100vh-190px)] min-h-[520px] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-white shadow-sm">
+    <div className="flex h-[78vh] min-h-[420px] flex-col overflow-hidden lg:h-full rounded-2xl border border-slate-800 bg-white shadow-sm">
       {/* thin toolbar: who Claude works as, and a new-chat button */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950/60 px-4 py-2">
         <CopilotBadge size={22} />
@@ -169,9 +189,25 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
         )}
       </div>
       {(claude.data?.required || az.data?.enabled) && (
-        <div className="flex flex-wrap items-start gap-2 border-b border-slate-800 px-4 py-2">
-          {claude.data?.required && <div className="min-w-0 flex-1 basis-80"><ClaudeAccount status={claude.data} onChanged={claude.reload} /></div>}
-          {az.data?.enabled && <div className="min-w-0 flex-1 basis-80"><AzAccount status={az.data} onChanged={az.reload} /></div>}
+        <div className="border-b border-slate-800 px-4 py-1.5">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+            {claude.data?.required && (
+              <span>
+                Claude: <strong className="text-slate-300">{claude.data.source === "own" ? "your own account" : `shared (${claude.data.source})`}</strong>{" "}
+                {claude.data.hasToken || claude.data.source !== "own" ? <span className="text-emerald-400">✓ connected</span> : <span className="text-amber-400">not connected</span>}
+              </span>
+            )}
+            {az.data?.enabled && az.data.signedIn && <span>Azure DevOps: <strong className="text-slate-300">as you</strong> ({az.data.user})</span>}
+            <button onClick={() => setShowAccounts((v) => !v)} className="ml-auto text-sky-600 hover:underline">
+              {showAccounts || needsToken ? "Hide settings" : "Account settings"}
+            </button>
+          </div>
+          {(showAccounts || needsToken) && (
+            <div className="mt-2 flex max-h-[40vh] flex-wrap items-start gap-2 overflow-y-auto pb-1">
+              {claude.data?.required && <div className="min-w-0 flex-1 basis-80"><ClaudeAccount status={claude.data} onChanged={claude.reload} /></div>}
+              {az.data?.enabled && <div className="min-w-0 flex-1 basis-80"><AzAccount status={az.data} onChanged={az.reload} /></div>}
+            </div>
+          )}
         </div>
       )}
 
@@ -195,7 +231,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
                       key={s.title}
                       disabled={disabled}
                       onClick={() => send(s.text)}
-                      className="group h-full rounded-xl border border-slate-800 bg-white p-4 text-left shadow-sm transition hover:border-[#7160e8] hover:shadow-md disabled:opacity-40"
+                      className="group h-full rounded-xl border border-slate-800 bg-white p-4 text-left shadow-sm transition hover:border-slate-600 hover:shadow-md disabled:opacity-40"
                     >
                       <span className="text-xl" aria-hidden>{s.icon}</span>
                       <p className="mt-2 text-sm font-semibold text-slate-100">{s.title}</p>
@@ -255,7 +291,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
             void send(input);
           }}
         >
-          <div className="flex items-end gap-2 rounded-2xl border border-slate-700 bg-white px-3 py-2 shadow-sm transition focus-within:border-[#7160e8] focus-within:shadow-md">
+          <div className="flex items-end gap-2 rounded-2xl border border-slate-700 bg-white px-3 py-2 shadow-sm transition focus-within:border-slate-500 focus-within:shadow-md">
             <textarea
               ref={box}
               value={input}
@@ -270,7 +306,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
                 }
               }}
               placeholder={needsToken ? "Connect your Claude account first" : scope === null ? "Select a project first" : `Message Claude about ${target}…`}
-              className="max-h-[150px] min-h-[28px] flex-1 resize-none bg-transparent py-1 text-sm text-slate-100 outline-none placeholder:text-slate-500 disabled:opacity-50"
+              className="no-ring max-h-[150px] min-h-[28px] flex-1 resize-none bg-transparent py-1 text-sm text-slate-100 outline-none placeholder:text-slate-500 disabled:opacity-50"
             />
             <button
               type="submit"

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, type PrRef, type User } from "../lib/api";
 import { useAsync } from "../hooks/useAsync";
 import { Card, Selector } from "../components/common";
@@ -23,6 +23,12 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
     }
   });
 
+  useEffect(() => {
+    if (!welcome) return;
+    const t = setTimeout(() => setWelcome(false), 8000);
+    return () => clearTimeout(t);
+  }, [welcome]);
+
   const orgs = useAsync(() => api.organizations(), []);
   const projects = useAsync(() => api.projects(org), [org], !!org);
   const repos = useAsync(() => api.repositories(org, project), [org, project], !!org && !!project);
@@ -34,16 +40,16 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
   const repoOptions = useMemo(() => (repos.data ?? []).map((r) => ({ value: r.name, label: r.name })), [repos.data]);
 
   return (
-    <div className="min-h-screen">
+    <div className="flex min-h-screen flex-col lg:h-screen lg:overflow-hidden">
       <Header user={user} onLogout={onLogout} />
       {welcome && (
-        <div role="status" className="mx-4 mt-3 flex items-center justify-between gap-3 rounded border border-emerald-400/40 bg-emerald-950 px-4 py-2 text-sm text-emerald-300">
+        <div role="status" className="mx-4 mt-2 flex shrink-0 items-center justify-between gap-3 rounded border border-emerald-400/40 bg-emerald-950 px-4 py-2 text-sm text-emerald-300">
           <span>✓ Signed in as <strong>{user.email ?? user.name}</strong>. Claude can now work in your Azure DevOps with your own access.</span>
           <button onClick={() => setWelcome(false)} className="text-xs underline">Dismiss</button>
         </div>
       )}
-      <main className="mx-auto grid max-w-[1800px] gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="space-y-4">
+      <main className="mx-auto grid min-h-0 w-full max-w-[1800px] flex-1 gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="min-h-0 space-y-4 lg:overflow-y-auto">
           <Card title="Source">
             <div className="space-y-3">
               <Selector
@@ -72,8 +78,8 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
           </Card>
         </aside>
 
-        <section className="min-w-0 space-y-3">
-          <nav className="flex gap-1 overflow-x-auto border-b border-slate-800" role="tablist">
+        <section className="flex min-h-0 min-w-0 flex-col gap-3">
+          <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-800" role="tablist">
             {[{ id: "chat" as const, label: "Chat" }, ...(ref && prId !== null ? PR_TABS : [])].map((t) => (
               <button
                 key={t.id}
@@ -89,14 +95,14 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
             ))}
           </nav>
           {/* Chat stays mounted so the conversation survives switching tabs. */}
-          <div hidden={view !== "chat" && !!ref && prId !== null}>
+          <div className="min-h-0 flex-1" hidden={view !== "chat" && !!ref && prId !== null}>
             <ChatPanel
               userName={user.name}
               prId={prId}
               scope={org && project ? { organization: org, project, repository: repoName || undefined } : null}
             />
           </div>
-          {ref && prId !== null && view !== "chat" && <PrPanel prId={prId} repo={ref} tab={view} />}
+          {ref && prId !== null && view !== "chat" && <div className="min-h-0 flex-1 overflow-y-auto"><PrPanel prId={prId} repo={ref} tab={view} /></div>}
         </section>
       </main>
     </div>

@@ -58,3 +58,14 @@ code, pre, .font-mono { font-family: "Cascadia Code", "Cascadia Mono", Consolas,
 .hljs-comment { color: #6e7781; font-style: italic; }
 .hljs-title, .hljs-function { color: #8250df; }
 .hljs-type, .hljs-class { color: #953800; }
+
+/* the chat box has its own focus look; no extra ring inside it */
+.no-ring:focus, .no-ring:focus-visible { outline: none !important; box-shadow: none !important; }
+
+/* "Claude is working": the four Microsoft squares light up in turn, plus a thin moving progress bar */
+@keyframes msPulse { 0%, 100% { opacity: .25; transform: scale(.88); } 40% { opacity: 1; transform: scale(1); } }
+.ms-square { animation: msPulse 1.2s ease-in-out infinite; }
+@keyframes msSlide { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+.ms-bar { position: relative; }
+.ms-bar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 30%; border-radius: 9999px; background: #0078d4; animation: msSlide 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .ms-square, .ms-bar::after { animation: none; } }
