@@ -58,6 +58,25 @@ def _risk_score(path: str) -> int:
     return score - 3 if _LOW_VALUE.search(path) else score
 
 
+def _coverage(state: dict[str, Any]) -> str:
+    """Tells Claude exactly how much of the PR it has read, so it cannot stop early without noticing."""
+    total, done = len(state["order"]), len(state["read"])
+    waiting = [p for p in state["order"] if p not in state["claimed"]]
+    lines = [f"COVERAGE: read {done} of {total} changed files."]
+    if waiting:
+        lines.append(
+            f"{len(waiting)} files are still UNREAD. Do NOT write your answer yet: call get_pr_file_diff with paths=NEXT "
+            f"again (several calls in parallel) until this line says ALL FILES READ."
+        )
+    elif done < total:
+        lines.append("Other batches are still loading; wait for them, then check again with paths=NEXT.")
+    else:
+        lines.append("ALL FILES READ.")
+    if state["notes"]:
+        lines.append("Needs a closer look (cut off or not shown): " + "; ".join(f"{p} [{n}]" for p, n in list(state["notes"].items())[:20]))
+    return "\n".join(lines)
+
+
 def _schema(props: dict[str, tuple[str, str]], required: list[str] | None = None) -> dict[str, Any]:
     """props: name -> (json type, description)."""
     return {
@@ -112,6 +131,7 @@ def build_tools(
     default_repository: str | None,
 ) -> list[Any]:
     settings = get_settings()
+    pr_reads: dict[int, dict[str, Any]] = {}  # per PR: which changed files Claude has read so far
 
     def project_of(args: dict[str, Any]) -> str:
         return (args.get("project") or default_project).strip()
@@ -235,6 +255,7 @@ def build_tools(
             if (e.get("item") or {}).get("path") and not (e.get("item") or {}).get("isFolder")
         ]
         files.sort(key=lambda f: (-_risk_score(f[0]), f[0]))
+        pr_reads[pr_id] = {"order": [p for p, _ in files], "claimed": set(), "read": set(), "notes": {}}
         src = (raw.get("sourceRefName") or "")
         pr_commit = ((latest or {}).get("sourceRefCommit") or {}).get("commitId") or ""
         head = next((b.get("objectId") for b in branches if b.get("name") == src), "")
@@ -259,7 +280,8 @@ def build_tools(
             f"Commits ({len(commits)}):",
             *[f"- {c.get('commitId', '')[:8]} {(c.get('comment') or '').splitlines()[0][:150] if c.get('comment') else ''}" for c in commits[:40]],
             "",
-            f"Changed files ({len(files)}), riskiest first. Read diffs with get_pr_file_diff (up to 8 paths per call):",
+            f"Changed files ({len(files)}), riskiest first. You must read ALL of them: call get_pr_file_diff with paths=NEXT, "
+            f"{(len(files) + 7) // 8} times in total (several in parallel). Its COVERAGE line tells you when you are done.",
             *[f"- [{ct}] {p}" for p, ct in files[:400]],
         ]
         if len(files) > 400:
@@ -278,12 +300,13 @@ def build_tools(
 
     @tool(
         "get_pr_file_diff",
-        "Unified diff (what changed) for specific files of a pull request. Pass up to 8 paths from get_pull_request, "
-        "comma-separated. Call it several times in parallel for more files.",
+        "Unified diff (what changed) for files of a pull request. Pass paths=\"NEXT\" to get the next 8 UNREAD files "
+        "(riskiest first); you can issue several NEXT calls in parallel, each gets a different batch. Or pass up to 8 "
+        "comma-separated paths. Every result ends with a COVERAGE line: keep calling until it says ALL FILES READ.",
         _schema(
             {
                 "project": PROJ, "repository": REPO, "pull_request_id": ("integer", "Pull request ID"),
-                "paths": ("string", "Comma-separated file paths exactly as listed, max 8, e.g. /backend/app/a.py,/backend/app/b.py"),
+                "paths": ("string", "\"NEXT\" (recommended) or comma-separated file paths exactly as listed, max 8"),
             },
             ["pull_request_id", "paths"],
         ),
@@ -291,22 +314,48 @@ def build_tools(
     @guarded
     async def get_pr_file_diff(args: dict[str, Any]) -> dict[str, Any]:
         project, repo, pr_id = project_of(args), repo_of(args), int(args["pull_request_id"])
-        wanted = [p.strip() for p in str(args.get("paths") or "").split(",") if p.strip()][:8]
-        if not wanted:
-            return _text("Give at least one path.", True)
+        state = pr_reads.get(pr_id)
+        raw_paths = str(args.get("paths") or "").strip()
+        if raw_paths.upper() == "NEXT":
+            if state is None:
+                return _text("Call get_pull_request for this PR first, then use paths=NEXT.", True)
+            wanted = [p for p in state["order"] if p not in state["claimed"]][:8]  # claimed at once: parallel calls get different files
+            state["claimed"].update(wanted)
+            if not wanted:
+                return _text(_coverage(state))
+        else:
+            wanted = [p.strip() for p in raw_paths.split(",") if p.strip()][:8]
+            if not wanted:
+                return _text("Give paths=NEXT or at least one path.", True)
+            if state is not None:
+                state["claimed"].update(wanted)
         changes = await get_pr_changes(client, organization, project, repo, pr_id, max_files=8, only_paths=set(wanted))
         if not changes.files:
-            return _text("None of those paths are in this PR. Use the exact paths from get_pull_request.", True)
+            return _text("None of those paths are in this PR. Use paths=NEXT, or the exact paths from get_pull_request.", True)
         per_file = min(20_000, 80_000 // len(changes.files))  # fewer files per call = more of each file
         parts = []
         for f in changes.files:
+            if state is not None:
+                state["read"].add(f.path)
             if f.diff_skipped_reason:
+                if state is not None:
+                    state["notes"][f.path] = f"diff not shown ({f.diff_skipped_reason})"
                 parts.append(f"### {f.path} [{f.change_type}]\n(diff not shown: {f.diff_skipped_reason})")
                 continue
             diff = f.diff or "(no textual change)"
-            note = f"\n... [diff cut: {len(diff)} chars, showing first {per_file}; call again with just this path, or use get_file on the branch for the rest]" if len(diff) > per_file else ""
+            cut = len(diff) > per_file
+            if state is not None:
+                if cut and len(changes.files) > 1:
+                    state["notes"][f.path] = f"cut at {per_file} of {len(diff)} chars: call get_pr_file_diff with just this path"
+                elif cut:
+                    state["notes"][f.path] = f"cut at {per_file} of {len(diff)} chars: read the rest with get_file on the branch"
+                else:
+                    state["notes"].pop(f.path, None)
+            note = f"\n... [diff cut: {len(diff)} chars, showing first {per_file}; call again with just this path, or use get_file on the branch for the rest]" if cut else ""
             parts.append(f"### {f.path} [{f.change_type}] +{f.additions}/-{f.deletions}\n{diff[:per_file]}{note}")
-        return _text("\n\n".join(parts), limit=85_000)
+        if state is not None:
+            parts.append(_coverage(state))
+        return _text("\n\n".join(parts), limit=87_000)
 
     @tool(
         "search_work_items",

@@ -634,3 +634,14 @@ def test_late_duplicate_az_status_after_success_says_signed_in_not_expired(monke
         # a second check that was already on its way when the first one finished
         late = client.get("/auth/az/status").json()
         assert late["signedIn"] is True and "expired" not in late
+
+
+def test_coverage_line_blocks_stopping_early_until_every_file_is_read():
+    from app.claude.azure_tools import _coverage
+
+    state = {"order": ["/a", "/b", "/c"], "claimed": {"/a"}, "read": {"/a"}, "notes": {}}
+    text = _coverage(state)
+    assert "read 1 of 3" in text and "UNREAD" in text and "NEXT" in text
+    state.update(claimed={"/a", "/b", "/c"}, read={"/a", "/b", "/c"}, notes={"/b": "cut"})
+    done = _coverage(state)
+    assert "read 3 of 3" in done and "\nALL FILES READ." in done and "/b" in done

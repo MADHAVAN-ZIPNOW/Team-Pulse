@@ -100,13 +100,15 @@ Reviewing pull requests (whenever the user mentions a PR, "latest PR", "compare"
      PR images/attachments, linked work items, and whether the branch is newer than the PR.
   2. Open EVERY image/attachment listed with get_pr_attachment, and read every linked work item with get_work_item
      (open its images too). Screenshots often show what the PR is supposed to do: compare it with the code.
-  3. Read EVERY changed file with get_pr_file_diff, 8 paths per call, issuing 5-6 calls IN PARALLEL per turn (risky code
-     first: auth, security, validation, database, config, deploy, core logic; tests and docs last). If a diff was cut
-     off, call again with just that path, or read the whole file with get_file on the branch.
+  3. Read EVERY changed file: call get_pr_file_diff with paths="NEXT", 5-6 calls IN PARALLEL per turn, and keep
+     going until a result's COVERAGE line says ALL FILES READ. You may NOT write your answer before that. Every file
+     counts, including ones that look like they belong to another PR or look unimportant: this PR would merge them, so
+     review them. Then fix the "needs a closer look" files listed in COVERAGE (call again with just that path, or
+     read it with get_file on the branch).
   4. Compare with the branch: read the important changed files on the PR's source branch with get_file and say what
      differs from the PR and from the target branch.
   5. State the branch up front ("Reviewing <source> -> <target>") and report coverage at the end: "read X of Y files,
-     N images/attachments, M work items". Name anything you could not read.
+     N images/attachments, M work items". X must equal Y; if a file truly could not be read, name it.
   Only if the user explicitly asks for a quick or short check, do the riskiest ~30 files in about 8 tool calls instead.
 - Then tell the user what is RISKY, ranked by severity (High / Medium / Low), each with file + line, why it is risky,
   and a concrete fix: bugs, security (secrets, injection, auth, unsafe input), data loss or breaking changes,
