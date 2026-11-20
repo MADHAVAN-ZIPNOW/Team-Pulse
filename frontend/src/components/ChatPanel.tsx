@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, type AskScope } from "../lib/api";
 import { useAsync } from "../hooks/useAsync";
-import { ErrorState } from "./common";
+import { ErrorState, MsLogo } from "./common";
 import { ClaudeAccount } from "./ClaudeAccount";
 import { AzAccount } from "./AzAccount";
 
@@ -37,22 +37,14 @@ const MAX_LEN = 2000;
 
 interface Msg { role: "user" | "assistant"; text: string; note?: string }
 
-function Sparkle({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z" />
-    </svg>
-  );
-}
-
 function CopilotBadge({ size = 28 }: { size?: number }) {
   return (
     <span
-      className="flex shrink-0 items-center justify-center rounded-full bg-linear-to-br from-[#2b88d8] via-[#7160e8] to-[#d46ef0] text-white shadow-sm"
+      className="flex shrink-0 items-center justify-center rounded-full border border-slate-800 bg-white shadow-sm"
       style={{ width: size, height: size }}
       aria-hidden
     >
-      <Sparkle size={Math.round(size * 0.55)} />
+      <MsLogo size={Math.round(size * 0.5)} />
     </span>
   );
 }
@@ -188,7 +180,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
           {empty && (
             <div className="pt-6 text-center sm:pt-12">
               <div className="mx-auto mb-4 flex justify-center"><CopilotBadge size={56} /></div>
-              <h2 className="bg-linear-to-r from-[#2b88d8] via-[#7160e8] to-[#d46ef0] bg-clip-text text-3xl font-semibold text-transparent">
+              <h2 className="text-3xl font-semibold text-slate-100">
                 Hello, {firstName}
               </h2>
               <p className="mt-2 text-base text-slate-500">

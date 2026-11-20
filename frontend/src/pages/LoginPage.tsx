@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ErrorState, Spinner } from "../components/common";
+import { ErrorState, MsLogo, Spinner } from "../components/common";
 
 const jsonFetch = async (path: string, init?: RequestInit) => {
   const res = await fetch(path, init);
@@ -7,15 +7,6 @@ const jsonFetch = async (path: string, init?: RequestInit) => {
   if (!res.ok) throw new Error(typeof body?.detail === "string" ? body.detail : `Request failed (HTTP ${res.status})`);
   return body;
 };
-
-function MsLogo() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden>
-      <rect width="10" height="10" fill="#f25022" /><rect x="11" width="10" height="10" fill="#7fba00" />
-      <rect y="11" width="10" height="10" fill="#00a4ef" /><rect x="11" y="11" width="10" height="10" fill="#ffb900" />
-    </svg>
-  );
-}
 
 /** base: "/auth/cli" = one shared az login on this machine; "/auth/az" = each person signs in with their own az login. */
 function CliSignIn({ base }: { base: "/auth/cli" | "/auth/az" }) {
@@ -40,21 +31,28 @@ function CliSignIn({ base }: { base: "/auth/cli" | "/auth/az" }) {
   useEffect(() => {
     if (step !== "waiting") return;
     const started = Date.now();
+    let inFlight = false;
+    let finished = false;
     const timer = setInterval(async () => {
+      if (inFlight || finished) return;  // never let two checks overlap: the second would report "expired"
       if (Date.now() - started > 15 * 60_000) {
         clearInterval(timer);
         setError("Sign-in timed out. Try again.");
         setStep("idle");
         return;
       }
+      inFlight = true;
       try {
         const res = await jsonFetch(`${base}/status`);
+        if (finished) return;
         if (res.signedIn) {
+          finished = true;
           clearInterval(timer);
           setStep("done");
           try { sessionStorage.setItem("justSignedIn", "1"); } catch { /* storage may be blocked */ }
           window.location.reload();
         } else if (res.expired) {
+          finished = true;
           clearInterval(timer);
           setError("The sign-in expired. Start again.");
           setStep("idle");
@@ -66,9 +64,11 @@ function CliSignIn({ base }: { base: "/auth/cli" | "/auth/az" }) {
           setStep("idle");
         }
         /* otherwise keep polling */
+      } finally {
+        inFlight = false;
       }
     }, 1500);
-    return () => clearInterval(timer);
+    return () => { finished = true; clearInterval(timer); };
   }, [step, base]);
 
   return (
@@ -127,11 +127,7 @@ export function LoginPage({ error }: { error: string | null }) {
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm space-y-6 rounded-2xl border border-slate-800 bg-white p-8 text-center shadow-xl">
         <div>
-          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded bg-sky-600 text-white" aria-hidden>
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-          </span>
+          <span className="mx-auto flex justify-center"><MsLogo size={44} /></span>
           <h1 className="mt-2 text-xl font-semibold text-slate-100">Azure DevOps PR Assistant</h1>
           <p className="mt-1 text-sm text-slate-400">Ask Claude about your Azure DevOps code, pull requests, tasks and attachments.</p>
         </div>

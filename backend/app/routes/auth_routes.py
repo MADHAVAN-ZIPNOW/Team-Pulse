@@ -191,6 +191,9 @@ async def az_status(request: Request, settings: Annotated[Settings, Depends(get_
     pid = unsign_value(request.cookies.get(AZ_PENDING_COOKIE), settings.session_secret)
     entry = pending.get(pid) if pid else None
     if entry is None:
+        existing = unsign_value(request.cookies.get(SESSION_COOKIE), settings.session_secret)
+        if existing and request.app.state.sessions.get(existing):  # a duplicate check that arrived after success
+            return JSONResponse({"signedIn": True})
         return JSONResponse({"signedIn": False, "expired": True})
     config_dir = entry[1]
     state = azure_cli.login_state(config_dir)

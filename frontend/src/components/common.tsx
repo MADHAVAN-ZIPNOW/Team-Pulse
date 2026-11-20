@@ -81,3 +81,13 @@ export function Badge({ children, tone = "slate" }: { children: ReactNode; tone?
   };
   return <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${tones[tone]}`}>{children}</span>;
 }
+
+/** The Microsoft four-square logo. */
+export function MsLogo({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 21 21" aria-hidden>
+      <rect width="10" height="10" fill="#f25022" /><rect x="11" width="10" height="10" fill="#7fba00" />
+      <rect y="11" width="10" height="10" fill="#00a4ef" /><rect x="11" y="11" width="10" height="10" fill="#ffb900" />
+    </svg>
+  );
+}

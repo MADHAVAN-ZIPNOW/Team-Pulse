@@ -619,3 +619,18 @@ def test_signed_in_session_survives_a_restart_until_logout(tmp_path):
     assert SessionStore(3600, folder, "other-secret").get(s.id) is None   # a changed SESSION_SECRET cannot read it
     again.delete(s.id)                                         # log out
     assert SessionStore(3600, folder, "secret-1").get(s.id) is None and not az_dir.exists()
+
+
+def test_late_duplicate_az_status_after_success_says_signed_in_not_expired(monkeypatch):
+    app, azure_cli, started = _az_login_app(monkeypatch)
+
+    async def fake_user(config_dir=None):
+        return {"name": "a@example.com", "email": "a@example.com", "tenantId": "tenant-123"}
+
+    monkeypatch.setattr(azure_cli, "current_user", fake_user)
+    with TestClient(app) as client:
+        client.post("/auth/az/start")
+        assert client.get("/auth/az/status").json()["signedIn"] is True
+        # a second check that was already on its way when the first one finished
+        late = client.get("/auth/az/status").json()
+        assert late["signedIn"] is True and "expired" not in late
