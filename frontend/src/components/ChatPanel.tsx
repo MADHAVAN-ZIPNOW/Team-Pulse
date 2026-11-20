@@ -50,7 +50,7 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
   }, [messages, busy]);
 
   const claude = useAsync(() => api.claudeStatus(), []);
-  const needsToken = !!claude.data?.required && !claude.data.hasToken;
+  const needsToken = !!claude.data?.required && claude.data.source === "own" && !claude.data.hasToken;
   const disabled = scope === null || busy || needsToken;
   const suggestions = prId !== null ? PR_SUGGESTIONS : scope?.repository ? REPO_SUGGESTIONS : PROJECT_SUGGESTIONS;
   const target = prId !== null ? `PR #${prId}` : scope?.repository ? `repository ${scope.repository}` : scope ? `project ${scope.project}` : null;
@@ -81,7 +81,7 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
       <div className="flex h-[70vh] min-h-[420px] flex-col lg:h-[calc(100vh-215px)]">
         {claude.data?.required && (
           <div className="mb-3">
-            <ClaudeAccount hasToken={claude.data.hasToken} onChanged={claude.reload} />
+            <ClaudeAccount status={claude.data} onChanged={claude.reload} />
           </div>
         )}
         <div className="flex-1 space-y-3 overflow-y-auto pr-1" aria-live="polite">
@@ -110,6 +110,9 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
             </div>
           )}
           {error && <ErrorState message={error} onRetry={lastQuestion ? () => send(lastQuestion, false) : undefined} />}
+          {error && /limit/i.test(error) && claude.data?.required && (
+            <p className="text-xs text-amber-400">Usage limit reached. Use the <strong>Claude account</strong> switch above to pick another account, then retry.</p>
+          )}
           <div ref={bottom} />
         </div>
 

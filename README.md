@@ -178,3 +178,15 @@ the chat. The token lives only in that person's server-side session (memory), is
 to Claude only for that person's questions (with a private, throw-away Claude config folder per question) and is
 dropped on logout or restart. With this setting the shared `CLAUDE_CODE_OAUTH_TOKEN` is never used, so you can
 delete it from the server.
+
+### Switching accounts when a limit is reached
+
+The owner can make teammates' accounts available by setting `SHARED_CLAUDE_TOKENS` on the server:
+
+```
+SHARED_CLAUDE_TOKENS=Abinaya=sk-ant-...;Monika=sk-ant-...
+```
+
+Each person then sees a **Claude account** switch above the chat (My own account / Shared: Abinaya / ...). The browser
+only ever receives the labels, never the tokens. Only add a token with its owner's consent, and check that your Claude plan
+and Anthropic's terms allow sharing it; questions asked on a shared account use that person's limits.

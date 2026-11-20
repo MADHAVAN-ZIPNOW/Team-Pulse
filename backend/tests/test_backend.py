@@ -293,12 +293,12 @@ def test_claude_token_lifecycle_never_echoed(monkeypatch):
     with TestClient(app) as client:
         assert client.get("/api/claude/status").status_code == 401  # needs sign-in
         session = _authed_client(app, client)
-        assert client.get("/api/claude/status").json() == {"required": True, "hasToken": False}
+        assert client.get("/api/claude/status").json() == {"required": True, "hasToken": False, "source": "own", "pool": []}
         assert client.put("/api/claude/token", json={"token": "bad"}).status_code == 422
         r = client.put("/api/claude/token", json={"token": GOOD_TOKEN})
         assert r.status_code == 204 and GOOD_TOKEN not in r.text
         status = client.get("/api/claude/status")
-        assert status.json() == {"required": True, "hasToken": True} and GOOD_TOKEN not in status.text
+        assert status.json()["hasToken"] is True and GOOD_TOKEN not in status.text
         assert GOOD_TOKEN not in client.get("/auth/me").text
         assert session.claude_token == GOOD_TOKEN and GOOD_TOKEN not in repr(session)
         assert client.put("/api/claude/token", json={"token": GOOD_TOKEN}, headers={"Origin": "http://evil.com"}).status_code == 403
@@ -328,3 +328,38 @@ def test_options_use_the_persons_own_token():
     assert own.env["ANTHROPIC_API_KEY"] == ""
     shared = build_options(Path.cwd().resolve())
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in shared.env
+
+
+# ---------------------------------------------------------------- shared accounts / switching
+POOL_TOKEN = "sk-ant-oat01-" + "Zy9X8w7V" * 6
+
+
+def test_shared_token_parsing(monkeypatch):
+    from app.config import _parse_shared_tokens
+
+    parsed = _parse_shared_tokens(f"Abinaya={POOL_TOKEN};bad entry;Own={POOL_TOKEN};Monika Sri={POOL_TOKEN}\nX=sk-short")
+    assert [label for label, _ in parsed] == ["Abinaya", "Monika Sri"]  # malformed + reserved 'own' skipped
+
+
+def test_switching_accounts_and_effective_token(monkeypatch):
+    from app.main import create_app
+    from app.routes.claude_routes import effective_claude_token
+
+    monkeypatch.setenv("REQUIRE_USER_CLAUDE_TOKEN", "true")
+    monkeypatch.setenv("SHARED_CLAUDE_TOKENS", f"Abinaya={POOL_TOKEN}")
+    get_settings.cache_clear()
+    app = create_app()
+    settings = get_settings()
+    with TestClient(app) as client:
+        session = _authed_client(app, client)
+        st = client.get("/api/claude/status")
+        assert st.json() == {"required": True, "hasToken": False, "source": "own", "pool": ["Abinaya"]}
+        assert POOL_TOKEN not in st.text                                   # only labels are ever sent
+        assert effective_claude_token(session, settings) is None
+        assert client.put("/api/claude/source", json={"source": "Nobody"}).status_code == 422
+        assert client.put("/api/claude/source", json={"source": "Abinaya"}).status_code == 204
+        assert effective_claude_token(session, settings) == POOL_TOKEN     # limit hit? switch to a shared account
+        client.put("/api/claude/token", json={"token": GOOD_TOKEN})
+        client.put("/api/claude/source", json={"source": "own"})
+        assert effective_claude_token(session, settings) == GOOD_TOKEN     # and back to your own
+        assert client.put("/api/claude/source", json={"source": "Abinaya"}, headers={"Origin": "http://evil.com"}).status_code == 403

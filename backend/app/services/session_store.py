@@ -29,6 +29,7 @@ class Session:
     account: dict[str, Any]
     user: UserProfile
     claude_token: str | None = field(default=None, repr=False)  # this person's own Claude token
+    claude_source: str = "own"  # "own" or the label of a shared account chosen by the owner
     created_at: float = field(default_factory=time.time)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 

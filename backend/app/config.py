@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 from dataclasses import dataclass
 from functools import lru_cache
@@ -42,6 +43,7 @@ class Settings:
     auth_mode: str
     allowed_users: tuple[str, ...]
     require_user_claude_token: bool
+    shared_claude_tokens: tuple[tuple[str, str], ...]
     session_ttl_seconds: int = 8 * 60 * 60
 
     # Limits for what is sent to Claude Code
@@ -69,6 +71,23 @@ class Settings:
         return f"https://login.microsoftonline.com/{self.tenant_id}"
 
 
+_LABEL_RE = re.compile(r"^[A-Za-z0-9 ._-]{1,40}$")
+_TOKEN_RE = re.compile(r"^sk-ant-[A-Za-z0-9_-]{20,400}$")
+
+
+def _parse_shared_tokens(raw: str) -> tuple[tuple[str, str], ...]:
+    """SHARED_CLAUDE_TOKENS="Abinaya=sk-ant-...;Monika=sk-ant-..." -> (("Abinaya", "sk-ant-..."), ...). Bad entries are skipped."""
+    pairs: list[tuple[str, str]] = []
+    for entry in re.split(r"[;\n]+", raw):
+        label, _, token = entry.strip().partition("=")
+        label, token = label.strip(), token.strip()
+        if _LABEL_RE.match(label) and _TOKEN_RE.match(token) and label.lower() != "own":
+            pairs.append((label, token))
+        elif entry.strip():
+            logger.warning("Ignoring a malformed SHARED_CLAUDE_TOKENS entry")
+    return tuple(pairs)
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     secret = os.getenv("SESSION_SECRET", "").strip()
@@ -88,6 +107,7 @@ def get_settings() -> Settings:
         backend_port=int(os.getenv("BACKEND_PORT", "8000") or "8000"),
         # Browsers treat http://localhost as a secure context, so Secure cookies work locally.
         cookie_secure=_bool("COOKIE_SECURE", True),
+        shared_claude_tokens=_parse_shared_tokens(os.getenv("SHARED_CLAUDE_TOKENS", "")),
         require_user_claude_token=_bool("REQUIRE_USER_CLAUDE_TOKEN", False),
         allowed_users=tuple(u.strip().lower() for u in os.getenv("ALLOWED_USERS", "").split(",") if u.strip()),
         auth_mode="azure_cli" if os.getenv("AUTH_MODE", "").strip().lower() == "azure_cli" else "msal",

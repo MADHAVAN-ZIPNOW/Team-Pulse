@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from ..auth.dependencies import get_current_session, require_same_origin
 from ..config import Settings, get_settings
-from ..schemas.claude import ClaudeStatus, ClaudeTokenRequest
+from ..schemas.claude import ClaudeSourceRequest, ClaudeStatus, ClaudeTokenRequest
 from ..services.rate_limit import RateLimiter, rate_limit_dependency
 from ..services.session_store import Session
 
@@ -25,7 +25,24 @@ async def status(
     session: Annotated[Session, Depends(get_current_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ClaudeStatus:
-    return ClaudeStatus(required=settings.require_user_claude_token, hasToken=bool(session.claude_token))
+    pool = [label for label, _ in settings.shared_claude_tokens]
+    source = session.claude_source if session.claude_source in pool else "own"
+    return ClaudeStatus(
+        required=settings.require_user_claude_token, hasToken=bool(session.claude_token), source=source, pool=pool
+    )
+
+
+@router.put("/source", status_code=204, dependencies=[Depends(require_same_origin)])
+async def choose_source(
+    body: ClaudeSourceRequest,
+    session: Annotated[Session, Depends(get_current_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    """Switch between your own token and a shared account (e.g. when your own limit is reached)."""
+    if body.source != "own" and body.source not in {label for label, _ in settings.shared_claude_tokens}:
+        raise HTTPException(status_code=422, detail="Unknown Claude account.")
+    session.claude_source = body.source
+    return Response(status_code=204)
 
 
 @router.put(
@@ -42,3 +59,12 @@ async def save_token(body: ClaudeTokenRequest, session: Annotated[Session, Depen
 async def remove_token(session: Annotated[Session, Depends(get_current_session)]) -> Response:
     session.claude_token = None
     return Response(status_code=204)
+
+
+def effective_claude_token(session: Session, settings: Settings) -> str | None:
+    """The token to use for this person's next question: a chosen shared account, else their own."""
+    if session.claude_source != "own":
+        for label, token in settings.shared_claude_tokens:
+            if label == session.claude_source:
+                return token
+    return session.claude_token

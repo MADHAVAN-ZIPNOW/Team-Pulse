@@ -35,7 +35,7 @@ export interface CommentThread {
 export interface AskResponse {
   answer: string; pullRequestId?: number | null; filesAnalyzed: number; filesTotal: number; contextTruncated: boolean;
 }
-export interface ClaudeStatus { required: boolean; hasToken: boolean }
+export interface ClaudeStatus { required: boolean; hasToken: boolean; source: string; pool: string[] }
 export interface AskScope { organization: string; project: string; repository?: string }
 export interface PrRef { organization: string; project: string; repository: string }
 
@@ -73,6 +73,12 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
+    }),
+  setClaudeSource: (source: string) =>
+    request<void>("/api/claude/source", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source }),
     }),
   removeClaudeToken: () => request<void>("/api/claude/token", { method: "DELETE" }),
   organizations: () => request<Organization[]>("/api/azure/organizations"),
