@@ -191,7 +191,13 @@ def build_tools(
     @tool(
         "get_pull_request",
         "Get a pull request's metadata, commits, changed files, unified diff and review comments.",
-        _schema({"project": PROJ, "repository": REPO, "pull_request_id": ("integer", "Pull request ID")}, ["pull_request_id"]),
+        _schema(
+            {
+                "project": PROJ, "repository": REPO, "pull_request_id": ("integer", "Pull request ID"),
+                "offset": ("integer", "Large PRs come in pages of 60000 chars; pass the offset the previous page gave"),
+            },
+            ["pull_request_id"],
+        ),
     )
     @guarded
     async def get_pull_request(args: dict[str, Any]) -> dict[str, Any]:
@@ -210,7 +216,12 @@ def build_tools(
             max_files=settings.max_changed_files, max_chars_per_file=settings.max_diff_chars_per_file,
             max_chars_total=settings.max_diff_chars_total, max_comments=settings.max_comments,
         )
-        return _text(ctx.to_prompt(), limit=150_000)
+        # Pages of 60k chars stay under Claude Code's tool-output limit (bigger results get saved to a file instead).
+        full, offset, page = ctx.to_prompt(), max(int(args.get("offset") or 0), 0), 60_000
+        piece = full[offset : offset + page]
+        if offset + page < len(full):
+            piece += f"\n\n[... PAGE END. {len(full) - offset - page} more chars: call get_pull_request again with offset={offset + page}]"
+        return _text(piece, limit=page + 300)
 
     @tool(
         "search_work_items",

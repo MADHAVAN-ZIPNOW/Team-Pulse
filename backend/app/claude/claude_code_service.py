@@ -110,6 +110,10 @@ their own permissions. Rules:
 - Use `az boards ...` (work items, queries), `az repos ...` (repos, pull requests, refs), `az pipelines ...` and
   `az devops project list|show`. Nothing else is available.
 - Current policy: {policy}. If a command is denied, do not try to work around it: tell the user it is not allowed.
+- Keep output small: use `--top N` or `--query "[].[id,title,status]"` (no pipes or braces). If a result is too large
+  and Claude Code saves it to a file, open that file with Read (offset/limit) or Grep; never give up and never answer
+  from output you did not read. To compare a PR with a branch, prefer the mcp__azure__ tools, which return the diff
+  in readable pieces.
 - Before changing anything, say in your answer what you changed (IDs and values), so the person can check it.
 - Examples: `az boards work-item show --id 123 --org https://dev.azure.com/{org} --output json`,
   `az boards work-item update --id 123 --state Closed --org https://dev.azure.com/{org}`,
@@ -186,9 +190,18 @@ def is_safe_bash(command: str, root: Path | None = None) -> tuple[bool, str]:
     return True, ""
 
 
-def _check_tool(tool_name: str, tool_input: dict[str, Any], root: Path | None, az: AzContext | None = None) -> str | None:
+def _is_saved_output(scratch: Path | None, raw: str) -> bool:
+    """Claude Code saves very large tool results to a file under its config dir ('tool-results'); only those may be read."""
+    return bool(scratch and raw and _inside(scratch, raw) and "tool-results" in Path(raw).parts)
+
+
+def _check_tool(
+    tool_name: str, tool_input: dict[str, Any], root: Path | None, az: AzContext | None = None, scratch: Path | None = None
+) -> str | None:
     """Returns a denial reason, or None to allow."""
     if tool_name.startswith(AZURE_PREFIX):
+        return None
+    if tool_name in ("Read", "Grep") and _is_saved_output(scratch, str(tool_input.get("file_path") or tool_input.get("path") or "")):
         return None
     if tool_name == "Bash" and az is not None:
         command = str(tool_input.get("command", "")).strip()
@@ -217,9 +230,9 @@ def _check_tool(tool_name: str, tool_input: dict[str, Any], root: Path | None, a
     return None
 
 
-def make_pre_tool_hook(root: Path | None, az: AzContext | None = None):  # type: ignore[no-untyped-def]
+def make_pre_tool_hook(root: Path | None, az: AzContext | None = None, scratch: Path | None = None):  # type: ignore[no-untyped-def]
     async def hook(input_data: dict[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:
-        reason = _check_tool(str(input_data.get("tool_name", "")), input_data.get("tool_input") or {}, root, az)
+        reason = _check_tool(str(input_data.get("tool_name", "")), input_data.get("tool_input") or {}, root, az, scratch)
         if reason:
             return {
                 "hookSpecificOutput": {
@@ -269,6 +282,9 @@ def build_options(
     local = list(LOCAL_TOOLS) if root is not None else []
     if az is not None and "Bash" not in local:
         local.append("Bash")  # only `az` commands pass the hook when there is no local repository
+    scratch = Path(config_dir).resolve() if config_dir else None
+    if scratch is not None:  # lets Claude open big results saved to a file (the hook allows only those files)
+        local += [t for t in ("Read", "Grep") if t not in local]
     if root is not None:
         cwd = str(root)
     else:  # no local repo: run in an empty scratch dir, with Azure tools only
@@ -285,7 +301,7 @@ def build_options(
         mcp_servers={"azure": mcp_server} if mcp_server else {},
         strict_mcp_config=True,  # ignore any MCP servers configured on this machine
         permission_mode="dontAsk",
-        hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[make_pre_tool_hook(root, az)])]},
+        hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[make_pre_tool_hook(root, az, scratch)])]},
         setting_sources=[],  # ignore the repo's / user's settings, hooks and CLAUDE.md permissions
         max_turns=40,
         env=env,

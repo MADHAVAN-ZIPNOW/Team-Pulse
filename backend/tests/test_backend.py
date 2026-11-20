@@ -579,3 +579,15 @@ def test_login_state_tracks_the_az_login_process():
     assert azure_cli.login_state("/tmp/x") == "done" and azure_cli.login_state("/tmp/x") == "unknown"
     azure_cli._login_procs["/tmp/y"] = type("Q", (), {"returncode": 1})()
     assert azure_cli.login_state("/tmp/y") == "failed"
+
+
+def test_saved_tool_output_is_readable_but_nothing_else(tmp_path):
+    from app.claude.claude_code_service import _check_tool
+
+    scratch = tmp_path / "claude-user-x"
+    saved = scratch / "projects" / "p" / "tool-results" / "out.txt"
+    saved.parent.mkdir(parents=True)
+    assert _check_tool("Read", {"file_path": str(saved)}, None, None, scratch) is None
+    assert _check_tool("Read", {"file_path": str(scratch / ".credentials.json")}, None, None, scratch)
+    assert _check_tool("Read", {"file_path": str(tmp_path / "other" / "tool-results" / "a")}, None, None, scratch)
+    assert _check_tool("Read", {"file_path": str(saved)}, None, None, None)
