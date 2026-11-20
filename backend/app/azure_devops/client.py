@@ -169,6 +169,21 @@ class AzureDevOpsClient:
     async def get_pull_request(self, organization: str, project: str, repository: str, pr_id: int) -> dict[str, Any]:
         return await self._get_json(f"{self._pr_base(organization, project, repository)}/{int(pr_id)}")
 
+    async def list_pr_attachments(self, organization: str, project: str, repository: str, pr_id: int) -> list[dict[str, Any]]:
+        data = await self._get_json(f"{self._pr_base(organization, project, repository)}/{int(pr_id)}/attachments")
+        return data.get("value") or []
+
+    async def get_pr_attachment(
+        self, organization: str, project: str, repository: str, pr_id: int, file_name: str
+    ) -> bytes:
+        url = f"{self._pr_base(organization, project, repository)}/{int(pr_id)}/attachments/{quote(file_name, safe='')}"
+        resp = await self._request(url, {}, accept="application/octet-stream")
+        return resp.content
+
+    async def list_pr_work_items(self, organization: str, project: str, repository: str, pr_id: int) -> list[dict[str, Any]]:
+        data = await self._get_json(f"{self._pr_base(organization, project, repository)}/{int(pr_id)}/workitems")
+        return data.get("value") or []
+
     async def list_iterations(self, organization: str, project: str, repository: str, pr_id: int) -> list[dict[str, Any]]:
         data = await self._get_json(f"{self._pr_base(organization, project, repository)}/{int(pr_id)}/iterations")
         return data.get("value") or []

@@ -10,6 +10,7 @@ import html
 import logging
 import re
 from typing import Any
+from urllib.parse import unquote
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 
@@ -27,6 +28,7 @@ MAX_FILE_CHARS = 60_000
 MAX_LIST = 300
 MAX_IMAGE_BYTES = 4_500_000
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+PR_ATTACH_RE = re.compile(r"pullRequests/\d+/attachments/([^)\s\"'<>]+)", re.IGNORECASE)
 GUID_RE = re.compile(r"/_apis/wit/attachments/([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})")
 IMG_SRC_RE = re.compile(r"""<img[^>]+src=["']([^"']+)["']""", re.IGNORECASE)
 WORK_ITEM_FIELDS = [
@@ -211,13 +213,20 @@ def build_tools(
     @guarded
     async def get_pull_request(args: dict[str, Any]) -> dict[str, Any]:
         project, repo, pr_id = project_of(args), repo_of(args), int(args["pull_request_id"])
-        raw, iterations, commits, threads, branches = await _gather(
+        raw, iterations, commits, threads, branches, attachments, linked = await _gather(
             client.get_pull_request(organization, project, repo, pr_id),
             client.list_iterations(organization, project, repo, pr_id),
             client.list_commits(organization, project, repo, pr_id),
             client.list_threads(organization, project, repo, pr_id),
             client.list_branches(organization, project, repo),
+            _tolerant(client.list_pr_attachments(organization, project, repo, pr_id)),
+            _tolerant(client.list_pr_work_items(organization, project, repo, pr_id)),
         )
+        text_for_links = (raw.get("description") or "") + " " + " ".join(
+            (c.get("content") or "") for t in threads for c in (t.get("comments") or [])
+        )
+        names = {a.get("displayName") for a in attachments if a.get("displayName")}
+        names |= {unquote(n) for n in PR_ATTACH_RE.findall(text_for_links)}
         latest = latest_iteration(iterations)
         entries = await client.get_iteration_changes(organization, project, repo, pr_id, latest["id"]) if latest else []
         files = [
@@ -238,7 +247,14 @@ def build_tools(
             f"Status: {raw.get('status')}{' (draft)' if raw.get('isDraft') else ''}  Author: {(raw.get('createdBy') or {}).get('displayName')}",
             f"{src.replace('refs/heads/', '')} -> {(raw.get('targetRefName') or '').replace('refs/heads/', '')}",
             f"Source branch vs PR: {branch_note}",
-            f"Description: {_strip_html(raw.get('description'))[:2000] or '(none)'}",
+            f"Description: {_strip_html(raw.get('description'))[:8000] or '(none)'}",
+            "",
+            f"Branch to compare: {src.replace('refs/heads/', '')} (the PR's source branch) into "
+            f"{(raw.get('targetRefName') or '').replace('refs/heads/', '')}",
+            f"PR images/attachments ({len(names)}): " + (", ".join(sorted(names)) or "none")
+            + ("  <- open EVERY one with get_pr_attachment" if names else ""),
+            f"Linked work items: " + (", ".join(str(w.get("id")) for w in linked) or "none")
+            + ("  <- read them with get_work_item (also open their images)" if linked else ""),
             "",
             f"Commits ({len(commits)}):",
             *[f"- {c.get('commitId', '')[:8]} {(c.get('comment') or '').splitlines()[0][:150] if c.get('comment') else ''}" for c in commits[:40]],
@@ -416,9 +432,36 @@ def build_tools(
         kind, text = doc
         return _text(f"Attachment {guid} ({kind}):\n{text}", limit=80_000)
 
+    @tool(
+        "get_pr_attachment",
+        "Open an image or document attached to a pull request (in its description or comments). Images are shown to you; "
+        "Word/PowerPoint/Excel/PDF/text are returned as text. Pass the file name listed by get_pull_request.",
+        _schema(
+            {"project": PROJ, "repository": REPO, "pull_request_id": ("integer", "Pull request ID"),
+             "file_name": ("string", "Attachment file name, e.g. image.png")},
+            ["pull_request_id", "file_name"],
+        ),
+    )
+    @guarded
+    async def get_pr_attachment(args: dict[str, Any]) -> dict[str, Any]:
+        project, repo, pr_id = project_of(args), repo_of(args), int(args["pull_request_id"])
+        name = str(args.get("file_name") or "").strip()
+        if not name:
+            return _text("Give the attachment file name.", True)
+        data = await client.get_pr_attachment(organization, project, repo, pr_id, name)
+        if _sniff_image(data):
+            return _image_result(data, name)
+        try:
+            doc = extract_document_text(data)
+        except Exception:  # noqa: BLE001
+            doc = None
+        if doc is None:
+            return _text(f"{name} ({len(data) // 1024} KB) cannot be read as text.", True)
+        return _text(f"{name} ({doc[0]}):" + chr(10) + doc[1], limit=80_000)
+
     tools = [
         list_repositories, list_branches, list_files, get_file, list_pull_requests,
-        get_pull_request, get_pr_file_diff, search_work_items, get_work_item, get_attachment,
+        get_pull_request, get_pr_file_diff, get_pr_attachment, search_work_items, get_work_item, get_attachment,
     ]
     return tools
 
@@ -432,6 +475,14 @@ def build_azure_server(
     tools = build_tools(client, organization, default_project, default_repository)
     server = create_sdk_mcp_server(name=SERVER_NAME, version="1.0.0", tools=tools)
     return server, [f"mcp__{SERVER_NAME}__{t.name}" for t in tools]
+
+
+async def _tolerant(coro):  # type: ignore[no-untyped-def]
+    """Optional extras (attachments, linked items) must never break the main answer."""
+    try:
+        return await coro
+    except Exception:  # noqa: BLE001
+        return []
 
 
 async def _gather(*coros):  # type: ignore[no-untyped-def]
