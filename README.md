@@ -61,6 +61,7 @@ copy .env.example .env
 | `AZURE_REDIRECT_URI` | `http://localhost:8000/auth/callback` (must match the registration exactly) |
 | `FRONTEND_URL` | `http://localhost:5173` |
 | `SESSION_SECRET` | random string: `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `SESSION_DIR`, `SESSION_TTL_DAYS` | where signed-in sessions are saved encrypted (default: temp folder) and days idle before sign-in is needed again (default 30). Use a Render persistent disk path to survive deploys. |
 | `LOCAL_REPO_PATH` | absolute path of your local clone, e.g. `C:/src/my-repo` |
 | `AZURE_DEVOPS_API_VERSION` | `7.1` |
 | `BACKEND_PORT` | `8000` (the Vite proxy and redirect URI assume 8000) |

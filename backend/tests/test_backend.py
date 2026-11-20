@@ -591,3 +591,31 @@ def test_saved_tool_output_is_readable_but_nothing_else(tmp_path):
     assert _check_tool("Read", {"file_path": str(scratch / ".credentials.json")}, None, None, scratch)
     assert _check_tool("Read", {"file_path": str(tmp_path / "other" / "tool-results" / "a")}, None, None, scratch)
     assert _check_tool("Read", {"file_path": str(saved)}, None, None, None)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_session_dir(monkeypatch, tmp_path):
+    """Every test gets its own empty folder for saved sessions, so none picks up another test's sign-in."""
+    monkeypatch.setenv("SESSION_DIR", str(tmp_path / "sessions"))
+    get_settings.cache_clear()
+
+
+def test_signed_in_session_survives_a_restart_until_logout(tmp_path):
+    from app.services.session_store import UserProfile
+
+    folder = str(tmp_path / "saved")
+    az_dir = tmp_path / "az-me"
+    az_dir.mkdir()
+    store = SessionStore(3600, folder, "secret-1")
+    s = store.create(None, {}, UserProfile(name="A", email="a@example.com", tenant_id="t", object_id=None))
+    s.claude_token, s.az_dir, s.az_user, s.claude_source = "sk-ant-oat01-" + "x" * 95, str(az_dir), "a@example.com", "own"
+    store.save(s)
+    assert "sk-ant" not in b"".join(p.read_bytes() for p in (tmp_path / "saved").glob("*.sess")).decode(errors="ignore")  # encrypted
+
+    again = SessionStore(3600, folder, "secret-1")             # the server restarted
+    back = again.get(s.id)
+    assert back and back.user.email == "a@example.com" and back.claude_token == s.claude_token and back.az_user == "a@example.com"
+
+    assert SessionStore(3600, folder, "other-secret").get(s.id) is None   # a changed SESSION_SECRET cannot read it
+    again.delete(s.id)                                         # log out
+    assert SessionStore(3600, folder, "secret-1").get(s.id) is None and not az_dir.exists()

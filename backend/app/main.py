@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("Missing configuration: %s (sign-in will not work until set in .env)", ", ".join(missing))
     if not settings.local_repo_path:
         logger.warning("LOCAL_REPO_PATH is not set; /api/ask will fail until it is configured.")
-    app.state.sessions = SessionStore(settings.session_ttl_seconds)
+    app.state.sessions = SessionStore(settings.session_ttl_seconds, settings.session_dir, settings.session_secret)
     app.state.flows = PendingFlowStore()
     app.state.auth = MicrosoftAuth(settings, app.state.sessions, app.state.flows)
     app.state.claude = ClaudeCodeService(settings.local_repo_path)

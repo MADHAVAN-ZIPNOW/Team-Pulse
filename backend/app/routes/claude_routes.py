@@ -1,13 +1,13 @@
 """Per-user Claude account: each person can supply their own `claude setup-token` token.
 
 The token lives only in this person's server-side session (memory). It is never returned by any endpoint,
-never logged, and is dropped on logout, session expiry or server restart.
+never logged, and is dropped on logout or when the session has been idle for 30 days (it is saved encrypted so a restart keeps it).
 """
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..auth.dependencies import get_current_session, require_same_origin
 from ..config import Settings, get_settings
@@ -34,6 +34,7 @@ async def status(
 
 @router.put("/source", status_code=204, dependencies=[Depends(require_same_origin)])
 async def choose_source(
+    request: Request,
     body: ClaudeSourceRequest,
     session: Annotated[Session, Depends(get_current_session)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -42,6 +43,7 @@ async def choose_source(
     if body.source != "own" and body.source not in {label for label, _ in settings.shared_claude_tokens}:
         raise HTTPException(status_code=422, detail="Unknown Claude account.")
     session.claude_source = body.source
+    request.app.state.sessions.save(session)
     return Response(status_code=204)
 
 
@@ -50,14 +52,16 @@ async def choose_source(
     status_code=204,
     dependencies=[Depends(require_same_origin), Depends(rate_limit_dependency(_token_limiter, "claude-token"))],
 )
-async def save_token(body: ClaudeTokenRequest, session: Annotated[Session, Depends(get_current_session)]) -> Response:
+async def save_token(request: Request, body: ClaudeTokenRequest, session: Annotated[Session, Depends(get_current_session)]) -> Response:
     session.claude_token = body.token
+    request.app.state.sessions.save(session)
     return Response(status_code=204)
 
 
 @router.delete("/token", status_code=204, dependencies=[Depends(require_same_origin)])
-async def remove_token(session: Annotated[Session, Depends(get_current_session)]) -> Response:
+async def remove_token(request: Request, session: Annotated[Session, Depends(get_current_session)]) -> Response:
     session.claude_token = None
+    request.app.state.sessions.save(session)
     return Response(status_code=204)
 
 

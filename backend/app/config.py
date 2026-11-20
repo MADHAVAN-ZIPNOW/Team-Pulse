@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -46,7 +47,8 @@ class Settings:
     az_enabled: bool
     az_policy: str
     shared_claude_tokens: tuple[tuple[str, str], ...]
-    session_ttl_seconds: int = 8 * 60 * 60
+    session_ttl_seconds: int = 30 * 24 * 60 * 60  # idle time before a person must sign in again
+    session_dir: str = ""  # where signed-in sessions are saved (encrypted)
 
     # Limits for what is sent to Claude Code
     max_question_chars: int = 2000
@@ -115,6 +117,8 @@ def get_settings() -> Settings:
         redirect_uri=os.getenv("AZURE_REDIRECT_URI", "http://localhost:8000/auth/callback").strip(),
         frontend_url=os.getenv("FRONTEND_URL", "http://localhost:5173").strip().rstrip("/"),
         session_secret=secret,
+        session_dir=os.getenv("SESSION_DIR", "").strip() or str(Path(tempfile.gettempdir()) / "pra-sessions"),
+        session_ttl_seconds=int(os.getenv("SESSION_TTL_DAYS", "30") or 30) * 24 * 3600,
         azure_devops_api_version=os.getenv("AZURE_DEVOPS_API_VERSION", "7.1").strip() or "7.1",
         local_repo_path=os.getenv("LOCAL_REPO_PATH", "").strip(),
         backend_port=int(os.getenv("BACKEND_PORT", "8000") or "8000"),

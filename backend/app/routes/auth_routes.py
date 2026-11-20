@@ -5,6 +5,7 @@ import secrets
 import shutil
 import tempfile
 import time
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode
 
@@ -136,6 +137,16 @@ AZ_PENDING_MAX = 20
 _az_start_limiter = RateLimiter(max_requests=5, window_seconds=60)
 
 
+def _az_parent(settings: Settings) -> str | None:
+    """Keep each person's az sign-in folder next to the saved sessions so it survives a restart too."""
+    try:
+        parent = Path(settings.session_dir) / "az"
+        parent.mkdir(parents=True, exist_ok=True)
+        return str(parent)
+    except OSError:
+        return None
+
+
 def _purge_pending(pending: dict[str, tuple[float, str]]) -> None:
     now = time.time()
     for pid in [k for k, (created, _) in pending.items() if now - created > AZ_PENDING_SECONDS]:
@@ -154,7 +165,7 @@ async def az_start(request: Request, settings: Annotated[Settings, Depends(get_s
     _purge_pending(pending)
     if len(pending) >= AZ_PENDING_MAX:
         raise HTTPException(status_code=429, detail="Too many sign-ins in progress. Try again in a few minutes.")
-    config_dir = tempfile.mkdtemp(prefix="az-login-")
+    config_dir = tempfile.mkdtemp(prefix="az-login-", dir=_az_parent(settings))
     try:
         info = await azure_cli.start_device_login(config_dir, settings.tenant_id or None)
     except azure_cli.AzureCliError as exc:
@@ -205,6 +216,7 @@ async def az_status(request: Request, settings: Annotated[Settings, Depends(get_
     user = UserProfile(name=info["name"] or email, email=email, tenant_id=info["tenantId"], object_id=None)
     session = request.app.state.sessions.create(None, {}, user)
     session.az_dir, session.az_user = config_dir, email  # Claude's az commands run as this person
+    request.app.state.sessions.save(session)
     response = JSONResponse({"signedIn": True})
     response.set_cookie(
         SESSION_COOKIE, sign_value(session.id, settings.session_secret), max_age=settings.session_ttl_seconds,
