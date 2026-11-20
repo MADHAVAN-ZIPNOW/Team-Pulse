@@ -1,0 +1,260 @@
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
+from app.auth.microsoft_auth import AuthError, MicrosoftAuth
+from app.azure_devops import models as m
+from app.azure_devops.client import AzureDevOpsClient, AzureDevOpsError, build_url
+from app.claude.claude_code_service import is_safe_bash
+from app.config import get_settings
+from app.schemas.ask import AskRequest
+from app.services.pr_context import build_pr_context
+from app.services.pull_requests import unified_diff
+from app.services.session_store import PendingFlowStore, SessionStore, sign_value, unsign_value
+
+
+# ---------------------------------------------------------------- OAuth state generation
+class FakeMsalApp:
+    def __init__(self):
+        self.calls = 0
+
+    def initiate_auth_code_flow(self, scopes, redirect_uri=None, **kw):
+        self.calls += 1
+        return {"auth_uri": f"https://login.example/authorize?state=s{self.calls}", "state": f"s{self.calls}", "code_verifier": "v"}
+
+
+def make_auth(monkeypatch):
+    settings = get_settings()
+    flows = PendingFlowStore()
+    auth = MicrosoftAuth(settings, SessionStore(60), flows)
+    fake = FakeMsalApp()
+    monkeypatch.setattr(auth, "_build_app", lambda: fake)
+    return auth, flows
+
+
+def test_login_state_is_unique_and_stored(monkeypatch):
+    auth, flows = make_auth(monkeypatch)
+    _, s1 = auth.start_login()
+    _, s2 = auth.start_login()
+    assert s1 != s2
+    assert flows.pop(s1)["code_verifier"] == "v"
+    assert flows.pop(s1) is None  # one-time use
+
+
+def test_callback_rejects_state_mismatch(monkeypatch):
+    auth, _ = make_auth(monkeypatch)
+    _, state = auth.start_login()
+    with pytest.raises(AuthError):
+        auth.complete_login({"state": state, "code": "x"}, cookie_state="other")
+    with pytest.raises(AuthError):
+        auth.complete_login({"state": "unknown", "code": "x"}, cookie_state="unknown")
+
+
+def test_cookie_signing_detects_tampering():
+    signed = sign_value("abc", "k")
+    assert unsign_value(signed, "k") == "abc"
+    assert unsign_value(signed + "x", "k") is None
+    assert unsign_value(signed, "other") is None
+
+
+# ---------------------------------------------------------------- Azure DevOps URLs
+def test_build_url_encodes_segments():
+    url = build_url("my org", "git", "repositories", "repo/../x", "pullrequests", project="Proj A")
+    assert url == "https://dev.azure.com/my%20org/Proj%20A/_apis/git/repositories/repo%2F..%2Fx/pullrequests"
+
+
+def test_build_url_without_project():
+    assert build_url("acme", "projects") == "https://dev.azure.com/acme/_apis/projects"
+
+
+async def test_client_sends_bearer_and_retries_on_429():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if len(seen) == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"value": [{"id": "1", "name": "p"}]})
+
+    async def token():
+        return "tok"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = AzureDevOpsClient(http, token, backoff_base=0.001)
+        projects = await client.list_projects("acme")
+    assert len(seen) == 2
+    assert seen[0].headers["Authorization"] == "Bearer tok"
+    assert seen[0].url.params["api-version"] == "7.1"
+    assert projects == [{"id": "1", "name": "p"}]
+
+
+async def test_client_maps_401_to_friendly_error():
+    async def token():
+        return "tok"
+
+    transport = httpx.MockTransport(lambda r: httpx.Response(401))
+    async with httpx.AsyncClient(transport=transport) as http:
+        with pytest.raises(AzureDevOpsError) as exc:
+            await AzureDevOpsClient(http, token).list_projects("acme")
+    assert exc.value.status_code == 401
+    assert "tok" not in exc.value.message
+
+
+# ---------------------------------------------------------------- PR context building
+def sample_pr() -> m.PullRequestDetail:
+    return m.parse_pr_detail(
+        {
+            "pullRequestId": 7,
+            "title": "Fix login",
+            "status": "active",
+            "createdBy": {"displayName": "Ada"},
+            "sourceRefName": "refs/heads/fix",
+            "targetRefName": "refs/heads/main",
+            "description": "desc",
+            "reviewers": [{"displayName": "Bob", "vote": 10}],
+        },
+        latest_iteration_id=2,
+    )
+
+
+def make_changes(n_files: int, diff_size: int) -> m.ChangesResponse:
+    files = [
+        m.FileChange(path=f"/src/f{i}.py", change_type="edit", diff="+" + "x" * diff_size, additions=1)
+        for i in range(n_files)
+    ]
+    return m.ChangesResponse(iteration_id=2, total_files=n_files, files=files)
+
+
+def build(changes, **limits):
+    args = dict(max_files=3, max_chars_per_file=50, max_chars_total=120, max_comments=5)
+    args.update(limits)
+    return build_pr_context(sample_pr(), [m.Commit(commit_id="abcdef123456", comment="fix it")], changes, [], **args)
+
+
+def test_pr_context_contains_metadata_and_diff():
+    ctx = build(make_changes(1, 10))
+    prompt = ctx.to_prompt()
+    assert "Title: Fix login" in prompt and "Bob (Approved)" in prompt
+    assert "/src/f0.py" in prompt and "abcdef12 fix it" in prompt
+    assert not ctx.truncated and ctx.files_included == 1
+
+
+def test_pr_context_enforces_limits():
+    ctx = build(make_changes(6, 500))
+    prompt = ctx.to_prompt()
+    assert ctx.truncated
+    assert "[diff truncated" in prompt
+    assert "/src/f5.py" not in prompt  # beyond max_files
+    assert len(ctx.to_prompt()) == len(prompt)  # rendering is idempotent
+
+
+def test_unified_diff_counts():
+    diff, add, rem = unified_diff("a\nb\n", "a\nc\nd\n", "/f", "/f")
+    assert (add, rem) == (2, 1) and "+c" in diff and "-b" in diff
+
+
+# ---------------------------------------------------------------- request validation
+def valid_body(**over):
+    body = {"organization": "acme", "project": "P", "repository": "R", "pullRequestId": 5, "question": "Review it"}
+    body.update(over)
+    return body
+
+
+def test_ask_request_accepts_valid_and_strips():
+    req = AskRequest.model_validate(valid_body(question="  hi  "))
+    assert req.question == "hi" and req.pull_request_id == 5
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"question": "x" * 2001},
+        {"question": "   "},
+        {"pullRequestId": 0},
+        {"organization": "a/b"},
+        {"repository": ""},
+        {"extra": "nope"},
+    ],
+)
+def test_ask_request_rejects_invalid(over):
+    with pytest.raises(ValidationError):
+        AskRequest.model_validate(valid_body(**over))
+
+
+def test_ask_requires_authentication():
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        assert client.get("/api/health").json()["status"] == "ok"
+        assert client.post("/api/ask", json=valid_body()).status_code == 401
+        assert client.get("/api/azure/organizations").status_code == 401
+        assert client.get("/auth/me").status_code == 401
+
+
+# ---------------------------------------------------------------- read-only bash guard
+@pytest.mark.parametrize(
+    "cmd,ok",
+    [
+        ("git log -n 5 --oneline", True),
+        ("git diff main...HEAD", True),
+        ("grep -rn foo src", True),
+        ("ls -la", True),
+        ("rm -rf /", False),
+        ("git push origin main", False),
+        ("git checkout .", False),
+        ("cat a.txt > b.txt", False),
+        ("ls; rm x", False),
+        ("echo $(whoami)", False),
+        ("find . -name x -delete", False),
+        ("curl http://evil", False),
+    ],
+)
+def test_bash_guard(cmd, ok):
+    assert is_safe_bash(cmd)[0] is ok
+
+
+# ---------------------------------------------------------------- general (non-PR) questions
+def test_ask_request_without_pr_or_repo():
+    req = AskRequest.model_validate({"organization": "acme", "project": "P", "question": "What tasks are open?"})
+    assert req.repository is None and req.pull_request_id is None
+
+
+def test_ask_request_pr_requires_repository():
+    with pytest.raises(ValidationError):
+        AskRequest.model_validate({"organization": "acme", "project": "P", "pullRequestId": 3, "question": "hi"})
+
+
+# ---------------------------------------------------------------- tool confinement
+def test_tool_confinement(tmp_path):
+    from app.claude.claude_code_service import _check_tool
+
+    root = tmp_path.resolve()
+    (root / "a.txt").write_text("x")
+    assert _check_tool("Read", {"file_path": str(root / "a.txt")}, root) is None
+    assert _check_tool("Read", {"file_path": str(root.parent / "secret.txt")}, root)
+    assert _check_tool("Read", {"file_path": "../secret.txt"}, root)
+    assert _check_tool("Glob", {"pattern": "**/*.py"}, root) is None
+    assert _check_tool("Glob", {"pattern": "../**/*.py"}, root)
+    assert _check_tool("Grep", {"pattern": "x", "path": str(root.parent)}, root)
+    assert _check_tool("Bash", {"command": "cat a.txt"}, root) is None
+    assert _check_tool("Bash", {"command": f"cat {root.parent / 'secret.txt'}"}, root)
+    assert _check_tool("Bash", {"command": "cat ~/.ssh/id_rsa"}, root)
+    assert _check_tool("mcp__azure__get_file", {"path": "/x"}, root) is None
+    assert _check_tool("Edit", {}, root)
+    assert _check_tool("Read", {"file_path": "a.txt"}, None)  # no local repo -> no local tools
+
+
+def test_attachment_text_extraction():
+    import io
+    import zipfile
+
+    from app.services.attachments import extract_document_text
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml", "<w:p><w:t>Hello</w:t></w:p><w:p><w:t>World</w:t></w:p>")
+    kind, text = extract_document_text(buf.getvalue())
+    assert kind == "docx" and "Hello" in text and "World" in text
+    assert extract_document_text(b"plain text")[0] == "text"
+    assert extract_document_text(b"\x00\x01\x02binary") is None

@@ -1,0 +1,60 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/*
+ * Microsoft Fluent-style light theme.
+ * The components were written against Tailwind's slate/sky/... scales; instead of editing every class we
+ * redefine those scales as Fluent neutrals and brand colours:
+ *   slate-950 = app canvas / code background     slate-900 = surface (cards, inputs)
+ *   slate-800 = borders, hover                   slate-700..300 = control borders -> body text
+ *   sky-600   = Microsoft blue (#0078d4)          emerald/red/amber = Fluent status colours
+ */
+@theme {
+  --font-sans: "Segoe UI", "Segoe UI Variable Text", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+
+  --color-slate-950: #f3f2f1;
+  --color-slate-900: #ffffff;
+  --color-slate-800: #e1dfdd;
+  --color-slate-700: #c8c6c4;
+  --color-slate-600: #a19f9d;
+  --color-slate-500: #605e5c;
+  --color-slate-400: #605e5c;
+  --color-slate-300: #323130;
+  --color-slate-200: #201f1e;
+  --color-slate-100: #201f1e;
+
+  --color-sky-950: #eff6fc;
+  --color-sky-900: #deecf9;
+  --color-sky-600: #0078d4;
+  --color-sky-500: #106ebe;
+  --color-sky-400: #0f6cbd;
+  --color-sky-300: #0f6cbd;
+  --color-sky-100: #004578;
+  --color-sky-50: #004578;
+
+  --color-emerald-950: #dff6dd;
+  --color-emerald-400: #107c10;
+  --color-emerald-300: #0e700e;
+  --color-red-950: #fde7e9;
+  --color-red-900: #f1bbbc;
+  --color-red-700: #d13438;
+  --color-red-400: #d13438;
+  --color-red-300: #a4262c;
+  --color-red-200: #a4262c;
+  --color-amber-950: #fff4ce;
+  --color-amber-400: #835b00;
+  --color-amber-300: #835b00;
+}
+
+:root { color-scheme: light; }
+body { font-family: var(--font-sans); background: #f3f2f1; color: #201f1e; -webkit-font-smoothing: antialiased; }
+code, pre, .font-mono { font-family: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace; }
+:focus-visible { outline: 2px solid #0078d4; outline-offset: 1px; }
+
+/* highlight.js token colours (light) used inside the diff viewer */
+.hljs-keyword, .hljs-built_in, .hljs-literal { color: #cf222e; }
+.hljs-string, .hljs-regexp { color: #0a3069; }
+.hljs-number, .hljs-attr { color: #0550ae; }
+.hljs-comment { color: #6e7781; font-style: italic; }
+.hljs-title, .hljs-function { color: #8250df; }
+.hljs-type, .hljs-class { color: #953800; }

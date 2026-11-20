@@ -1,0 +1,27 @@
+# Render Blueprint: one Docker web service (React UI + FastAPI + Claude Code CLI).
+# Secrets are marked sync:false - Render asks for them in the dashboard; they are never stored in git.
+services:
+  - type: web
+    name: azure-devops-pr-assistant
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free            # free instances sleep when idle and sign everyone out; use starter for a team
+    healthCheckPath: /api/health
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: AZURE_TENANT_ID
+        sync: false
+      - key: AZURE_CLIENT_ID
+        sync: false
+      - key: AZURE_CLIENT_SECRET
+        sync: false
+      - key: AZURE_REDIRECT_URI        # https://<service>.onrender.com/auth/callback
+        sync: false
+      - key: FRONTEND_URL              # https://<service>.onrender.com
+        sync: false
+      - key: ALLOWED_USERS             # comma-separated sign-in emails allowed to use the app
+        sync: false
+      - key: CLAUDE_CODE_OAUTH_TOKEN   # from `claude setup-token` (your Claude subscription)
+        sync: false
