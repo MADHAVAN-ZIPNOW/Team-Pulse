@@ -99,6 +99,21 @@ async def current_user(config_dir: str | None = None) -> dict[str, str | None] |
     return {"name": user, "email": user, "tenantId": data.get("tenantId")}
 
 
+_login_procs: dict[str, asyncio.subprocess.Process] = {}  # running `az login`, keyed by config dir
+
+
+def login_state(config_dir: str | None) -> str:
+    """"running" while the person has not finished the code sign-in, "done" / "failed" once `az login` exited,
+    "unknown" if we are not tracking one (then the caller falls back to asking `az account show`)."""
+    proc = _login_procs.get(config_dir or "")
+    if proc is None:
+        return "unknown"
+    if proc.returncode is None:
+        return "running"
+    _login_procs.pop(config_dir or "", None)
+    return "done" if proc.returncode == 0 else "failed"
+
+
 async def start_device_login(config_dir: str | None = None, tenant: str | None = None) -> dict[str, str]:
     """Spawns `az login --use-device-code` and returns the code + URL the user must open."""
     args = ["login", "--use-device-code", "--allow-no-subscriptions", "--output", "none"]
@@ -109,6 +124,7 @@ async def start_device_login(config_dir: str | None = None, tenant: str | None =
     )
     assert proc.stderr is not None
     stderr = proc.stderr
+    _login_procs[config_dir or ""] = proc
     buffer = ""
 
     async def read() -> dict[str, str]:

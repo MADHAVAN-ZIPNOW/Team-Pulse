@@ -13,6 +13,15 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
   const [repoName, setRepoName] = useState("");
   const [prId, setPrId] = useState<number | null>(null);
   const [view, setView] = useState<"chat" | PrTab>("chat");
+  const [welcome, setWelcome] = useState(() => {
+    try {
+      const fresh = sessionStorage.getItem("justSignedIn") === "1";
+      sessionStorage.removeItem("justSignedIn");
+      return fresh;
+    } catch {
+      return false;
+    }
+  });
 
   const orgs = useAsync(() => api.organizations(), []);
   const projects = useAsync(() => api.projects(org), [org], !!org);
@@ -27,6 +36,12 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
   return (
     <div className="min-h-screen">
       <Header user={user} onLogout={onLogout} />
+      {welcome && (
+        <div role="status" className="mx-4 mt-3 flex items-center justify-between gap-3 rounded border border-emerald-400/40 bg-emerald-950 px-4 py-2 text-sm text-emerald-300">
+          <span>✓ Signed in as <strong>{user.email ?? user.name}</strong>. Claude can now work in your Azure DevOps with your own access.</span>
+          <button onClick={() => setWelcome(false)} className="text-xs underline">Dismiss</button>
+        </div>
+      )}
       <main className="mx-auto grid max-w-[1800px] gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="space-y-4">
           <Card title="Source">

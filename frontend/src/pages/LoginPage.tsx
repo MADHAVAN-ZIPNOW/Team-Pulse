@@ -8,9 +8,18 @@ const jsonFetch = async (path: string, init?: RequestInit) => {
   return body;
 };
 
+function MsLogo() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden>
+      <rect width="10" height="10" fill="#f25022" /><rect x="11" width="10" height="10" fill="#7fba00" />
+      <rect y="11" width="10" height="10" fill="#00a4ef" /><rect x="11" y="11" width="10" height="10" fill="#ffb900" />
+    </svg>
+  );
+}
+
 /** base: "/auth/cli" = one shared az login on this machine; "/auth/az" = each person signs in with their own az login. */
 function CliSignIn({ base }: { base: "/auth/cli" | "/auth/az" }) {
-  const [step, setStep] = useState<"idle" | "starting" | "waiting">("idle");
+  const [step, setStep] = useState<"idle" | "starting" | "waiting" | "done">("idle");
   const [login, setLogin] = useState<{ code: string; url: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +51,8 @@ function CliSignIn({ base }: { base: "/auth/cli" | "/auth/az" }) {
         const res = await jsonFetch(`${base}/status`);
         if (res.signedIn) {
           clearInterval(timer);
+          setStep("done");
+          try { sessionStorage.setItem("justSignedIn", "1"); } catch { /* storage may be blocked */ }
           window.location.reload();
         } else if (res.expired) {
           clearInterval(timer);
@@ -56,14 +67,18 @@ function CliSignIn({ base }: { base: "/auth/cli" | "/auth/az" }) {
         }
         /* otherwise keep polling */
       }
-    }, 3000);
+    }, 1500);
     return () => clearInterval(timer);
   }, [step, base]);
 
   return (
     <div className="space-y-4">
       {error && <ErrorState message={error} />}
-      {step === "waiting" && login ? (
+      {step === "done" ? (
+        <p className="rounded border border-emerald-400/40 bg-emerald-950 px-3 py-3 text-sm font-medium text-emerald-300" role="status">
+          ✓ Signed in. Opening the app…
+        </p>
+      ) : step === "waiting" && login ? (
         <div className="space-y-3 text-left text-sm text-slate-300">
           <p>
             1. Open{" "}
@@ -71,16 +86,20 @@ function CliSignIn({ base }: { base: "/auth/cli" | "/auth/az" }) {
           </p>
           <p>2. Enter this code and sign in with your Microsoft account:</p>
           <p className="rounded bg-slate-950 py-3 text-center font-mono text-2xl tracking-widest text-sky-300 select-all">{login.code}</p>
-          <Spinner label="Waiting for you to finish signing in…" />
+          <Spinner label="Waiting for you to finish signing in… the app opens by itself." />
         </div>
       ) : (
         <button
           onClick={start}
           disabled={step === "starting"}
-          className="w-full rounded bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-2 rounded bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
         >
-          {step === "starting" ? "Starting…" : base === "/auth/az" ? "Sign in with a code" : "Sign in with code (Azure CLI)"}
+          <MsLogo />
+          {step === "starting" ? "Getting your code…" : "Sign in with Microsoft"}
         </button>
+      )}
+      {step === "idle" && base === "/auth/az" && (
+        <p className="text-xs text-slate-500">You will get a short code to enter at microsoft.com/devicelogin.</p>
       )}
     </div>
   );
@@ -92,10 +111,7 @@ function MicrosoftSignIn() {
       href="/auth/login"
       className="flex w-full items-center justify-center gap-2 rounded bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500"
     >
-      <svg width="16" height="16" viewBox="0 0 21 21" aria-hidden>
-        <rect width="10" height="10" fill="#f25022" /><rect x="11" width="10" height="10" fill="#7fba00" />
-        <rect y="11" width="10" height="10" fill="#00a4ef" /><rect x="11" y="11" width="10" height="10" fill="#ffb900" />
-      </svg>
+      <MsLogo />
       Sign in with Microsoft
     </a>
   );
@@ -117,7 +133,7 @@ export function LoginPage({ error }: { error: string | null }) {
             </svg>
           </span>
           <h1 className="mt-2 text-xl font-semibold text-slate-100">Azure DevOps PR Assistant</h1>
-          <p className="mt-1 text-sm text-slate-400">Review pull requests with Claude Code, running locally on your machine.</p>
+          <p className="mt-1 text-sm text-slate-400">Ask Claude about your Azure DevOps code, pull requests, tasks and attachments.</p>
         </div>
         {error && <ErrorState message={error} />}
         {mode === null ? <Spinner /> : mode === "az_login" ? <CliSignIn base="/auth/az" /> : mode === "azure_cli" ? <CliSignIn base="/auth/cli" /> : <MicrosoftSignIn />}

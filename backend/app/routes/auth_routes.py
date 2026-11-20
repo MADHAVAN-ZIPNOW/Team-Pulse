@@ -182,6 +182,13 @@ async def az_status(request: Request, settings: Annotated[Settings, Depends(get_
     if entry is None:
         return JSONResponse({"signedIn": False, "expired": True})
     config_dir = entry[1]
+    state = azure_cli.login_state(config_dir)
+    if state == "running":  # still waiting for the person: answer at once, no need to start az
+        return JSONResponse({"signedIn": False})
+    if state == "failed":
+        pending.pop(pid, None)
+        shutil.rmtree(config_dir, ignore_errors=True)
+        return JSONResponse({"signedIn": False, "expired": True})
     try:
         info = await azure_cli.current_user(config_dir)
     except azure_cli.AzureCliError as exc:

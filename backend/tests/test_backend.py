@@ -457,6 +457,9 @@ def _az_login_app(monkeypatch, allowed="a@example.com"):
     monkeypatch.setenv("ALLOWED_USERS", allowed)
     monkeypatch.setenv("AZURE_TENANT_ID", "tenant-123")
     get_settings.cache_clear()
+    from app.routes import auth_routes
+
+    auth_routes._az_start_limiter._hits.clear()  # the limiter is module-wide; do not let earlier tests exhaust it
     started = {}
 
     async def fake_start(config_dir=None, tenant=None):
@@ -540,3 +543,39 @@ def test_az_start_not_available_in_other_modes(monkeypatch):
     get_settings.cache_clear()
     with TestClient(create_app()) as client:
         assert client.post("/auth/az/start").status_code == 404
+
+
+def test_az_status_is_instant_while_the_person_has_not_finished(monkeypatch):
+    app, azure_cli, _ = _az_login_app(monkeypatch)
+    calls = {"user": 0}
+
+    async def counting_user(config_dir=None):
+        calls["user"] += 1
+        return None
+
+    monkeypatch.setattr(azure_cli, "current_user", counting_user)
+    monkeypatch.setattr(azure_cli, "login_state", lambda d: "running")
+    with TestClient(app) as client:
+        client.post("/auth/az/start")
+        for _ in range(3):
+            assert client.get("/auth/az/status").json() == {"signedIn": False}
+        assert calls["user"] == 0                                    # no az process was started while waiting
+        monkeypatch.setattr(azure_cli, "login_state", lambda d: "failed")
+        assert client.get("/auth/az/status").json()["expired"] is True
+
+
+def test_login_state_tracks_the_az_login_process():
+    import asyncio
+
+    from app.services import azure_cli
+
+    class P:  # stands in for the running `az login`
+        returncode = None
+
+    p = P()
+    azure_cli._login_procs["/tmp/x"] = p
+    assert azure_cli.login_state("/tmp/x") == "running"
+    p.returncode = 0
+    assert azure_cli.login_state("/tmp/x") == "done" and azure_cli.login_state("/tmp/x") == "unknown"
+    azure_cli._login_procs["/tmp/y"] = type("Q", (), {"returncode": 1})()
+    assert azure_cli.login_state("/tmp/y") == "failed"
