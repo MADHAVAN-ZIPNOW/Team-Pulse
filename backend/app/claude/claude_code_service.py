@@ -109,6 +109,14 @@ DRIVE_RE = re.compile(r"^[A-Za-z]:")
 MAX_RUNTIME_SECONDS = 600
 
 
+_SECRET_RE = re.compile(r"(sk-ant-|rnd_|eyJ)[A-Za-z0-9_.-]{8,}")
+
+
+def _redact(text: str) -> str:
+    """Strip anything token-shaped before an error text is logged or shown."""
+    return _SECRET_RE.sub("<hidden>", text)
+
+
 class ClaudeCodeError(Exception):
     """Message is safe to show to the user."""
 
@@ -284,8 +292,10 @@ class ClaudeCodeService:
                     chunks.append(text)
             elif isinstance(message, ResultMessage):
                 if message.is_error:
-                    logger.error("Claude Code returned an error result: %s", message.subtype)
-                    raise ClaudeCodeError("Claude Code reported an error while answering.")
+                    detail = _redact(str(message.result or "")).strip()[:300]
+                    logger.error("Claude Code returned an error result (%s): %s", message.subtype, detail)
+                    hint = f" Reason: {detail}" if detail else ""
+                    raise ClaudeCodeError(f"Claude Code reported an error while answering.{hint}")
                 final = message.result
         answer = (final or (chunks[-1] if chunks else "")).strip()
         if not answer:
