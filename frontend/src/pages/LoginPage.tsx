@@ -8,7 +8,8 @@ const jsonFetch = async (path: string, init?: RequestInit) => {
   return body;
 };
 
-function CliSignIn() {
+/** base: "/auth/cli" = one shared az login on this machine; "/auth/az" = each person signs in with their own az login. */
+function CliSignIn({ base }: { base: "/auth/cli" | "/auth/az" }) {
   const [step, setStep] = useState<"idle" | "starting" | "waiting">("idle");
   const [login, setLogin] = useState<{ code: string; url: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -18,8 +19,8 @@ function CliSignIn() {
     setStep("starting");
     try {
       // If `az` is already signed in, this finishes immediately.
-      if ((await jsonFetch("/auth/cli/status")).signedIn) return window.location.reload();
-      setLogin(await jsonFetch("/auth/cli/start", { method: "POST" }));
+      if (base === "/auth/cli" && (await jsonFetch(`${base}/status`)).signedIn) return window.location.reload();
+      setLogin(await jsonFetch(`${base}/start`, { method: "POST" }));
       setStep("waiting");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start sign-in");
@@ -38,16 +39,26 @@ function CliSignIn() {
         return;
       }
       try {
-        if ((await jsonFetch("/auth/cli/status")).signedIn) {
+        const res = await jsonFetch(`${base}/status`);
+        if (res.signedIn) {
           clearInterval(timer);
           window.location.reload();
+        } else if (res.expired) {
+          clearInterval(timer);
+          setError("The sign-in expired. Start again.");
+          setStep("idle");
         }
-      } catch {
-        /* keep polling */
+      } catch (e) {
+        if (e instanceof Error && /not allowed/i.test(e.message)) {  // a clear refusal: stop and show it
+          clearInterval(timer);
+          setError(e.message);
+          setStep("idle");
+        }
+        /* otherwise keep polling */
       }
     }, 3000);
     return () => clearInterval(timer);
-  }, [step]);
+  }, [step, base]);
 
   return (
     <div className="space-y-4">
@@ -68,7 +79,7 @@ function CliSignIn() {
           disabled={step === "starting"}
           className="w-full rounded bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
         >
-          {step === "starting" ? "Starting…" : "Sign in with code (Azure CLI)"}
+          {step === "starting" ? "Starting…" : base === "/auth/az" ? "Sign in with a code" : "Sign in with code (Azure CLI)"}
         </button>
       )}
     </div>
@@ -109,7 +120,7 @@ export function LoginPage({ error }: { error: string | null }) {
           <p className="mt-1 text-sm text-slate-400">Review pull requests with Claude Code, running locally on your machine.</p>
         </div>
         {error && <ErrorState message={error} />}
-        {mode === null ? <Spinner /> : mode === "azure_cli" ? <CliSignIn /> : <MicrosoftSignIn />}
+        {mode === null ? <Spinner /> : mode === "az_login" ? <CliSignIn base="/auth/az" /> : mode === "azure_cli" ? <CliSignIn base="/auth/cli" /> : <MicrosoftSignIn />}
       </div>
     </main>
   );

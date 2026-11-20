@@ -43,6 +43,8 @@ class Settings:
     auth_mode: str
     allowed_users: tuple[str, ...]
     require_user_claude_token: bool
+    az_enabled: bool
+    az_policy: str
     shared_claude_tokens: tuple[tuple[str, str], ...]
     session_ttl_seconds: int = 8 * 60 * 60
 
@@ -54,7 +56,7 @@ class Settings:
     max_comments: int = 40
 
     def missing_auth_config(self) -> list[str]:
-        if self.auth_mode == "azure_cli":
+        if self.auth_mode in ("azure_cli", "az_login"):
             return []  # tokens come from `az login`; no app registration needed
         missing = []
         for env_name, value in (
@@ -69,6 +71,17 @@ class Settings:
     @property
     def authority(self) -> str:
         return f"https://login.microsoftonline.com/{self.tenant_id}"
+
+
+def _auth_mode(raw: str) -> str:
+    """msal (default, Entra app registration) | azure_cli (one shared az login, local use) | az_login (each person's own az login)."""
+    value = (raw or "").strip().lower()
+    return value if value in ("azure_cli", "az_login") else "msal"
+
+
+def _az_policy(raw: str) -> str:
+    value = (raw or "read").strip().lower()
+    return value if value in ("read", "write", "full") else "read"
 
 
 _LABEL_RE = re.compile(r"^[A-Za-z0-9 ._-]{1,40}$")
@@ -108,7 +121,9 @@ def get_settings() -> Settings:
         # Browsers treat http://localhost as a secure context, so Secure cookies work locally.
         cookie_secure=_bool("COOKIE_SECURE", True),
         shared_claude_tokens=_parse_shared_tokens(os.getenv("SHARED_CLAUDE_TOKENS", "")),
+        az_enabled=_bool("AZ_ENABLED", False) or _auth_mode(os.getenv("AUTH_MODE", "")) == "az_login",
+        az_policy=_az_policy(os.getenv("AZ_POLICY", "read")),
         require_user_claude_token=_bool("REQUIRE_USER_CLAUDE_TOKEN", False),
         allowed_users=tuple(u.strip().lower() for u in os.getenv("ALLOWED_USERS", "").split(",") if u.strip()),
-        auth_mode="azure_cli" if os.getenv("AUTH_MODE", "").strip().lower() == "azure_cli" else "msal",
+        auth_mode=_auth_mode(os.getenv("AUTH_MODE", "")),
     )

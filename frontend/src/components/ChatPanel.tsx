@@ -5,6 +5,7 @@ import { api, type AskScope } from "../lib/api";
 import { useAsync } from "../hooks/useAsync";
 import { Card, ErrorState, Spinner } from "./common";
 import { ClaudeAccount } from "./ClaudeAccount";
+import { AzAccount } from "./AzAccount";
 
 const PR_SUGGESTIONS = [
   "Summarize this PR",
@@ -50,6 +51,7 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
   }, [messages, busy]);
 
   const claude = useAsync(() => api.claudeStatus(), []);
+  const az = useAsync(() => api.azStatus(), []);
   const needsToken = !!claude.data?.required && claude.data.source === "own" && !claude.data.hasToken;
   const disabled = scope === null || busy || needsToken;
   const suggestions = prId !== null ? PR_SUGGESTIONS : scope?.repository ? REPO_SUGGESTIONS : PROJECT_SUGGESTIONS;
@@ -82,6 +84,11 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
         {claude.data?.required && (
           <div className="mb-3">
             <ClaudeAccount status={claude.data} onChanged={claude.reload} />
+          </div>
+        )}
+        {az.data?.enabled && (
+          <div className="mb-3">
+            <AzAccount status={az.data} onChanged={az.reload} />
           </div>
         )}
         <div className="flex-1 space-y-3 overflow-y-auto pr-1" aria-live="polite">

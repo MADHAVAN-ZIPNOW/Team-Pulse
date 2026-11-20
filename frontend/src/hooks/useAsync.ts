@@ -14,6 +14,7 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[], enabled = tru
   const [loading, setLoading] = useState(false);
   const [tick, setTick] = useState(0);
   const fnRef = useRef(fn);
+  const lastTick = useRef(0);
   fnRef.current = fn;
 
   useEffect(() => {
@@ -23,10 +24,12 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[], enabled = tru
       setLoading(false);
       return;
     }
+    const isReload = lastTick.current !== tick; // a reload keeps what is on screen; new inputs clear it
+    lastTick.current = tick;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setData(null);
+    if (!isReload) setData(null);
     fnRef.current()
       .then((d) => !cancelled && setData(d))
       .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : "Something went wrong"))

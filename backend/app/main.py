@@ -19,7 +19,7 @@ from .auth.microsoft_auth import MicrosoftAuth
 from .azure_devops.client import AzureDevOpsError
 from .claude.claude_code_service import ClaudeCodeService
 from .config import Settings, get_settings
-from .routes import auth_routes, azure_routes, chat_routes, claude_routes
+from .routes import auth_routes, az_routes, azure_routes, chat_routes, claude_routes
 from .services.rate_limit import RateLimiter
 from .services.session_store import PendingFlowStore, SessionStore
 
@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.flows = PendingFlowStore()
     app.state.auth = MicrosoftAuth(settings, app.state.sessions, app.state.flows)
     app.state.claude = ClaudeCodeService(settings.local_repo_path)
+    app.state.az_pending = {}  # pending az code sign-ins: id -> (started, private az folder)
     app.state.http = httpx.AsyncClient(
         timeout=httpx.Timeout(30.0, connect=10.0), limits=httpx.Limits(max_connections=20)
     )
@@ -102,6 +103,7 @@ def create_app() -> FastAPI:
     app.include_router(azure_routes.router, dependencies=[Depends(get_current_session)])
     app.include_router(chat_routes.router)
     app.include_router(claude_routes.router)
+    app.include_router(az_routes.router)
     _mount_frontend(app)
     return app
 

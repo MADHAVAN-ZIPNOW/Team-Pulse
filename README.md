@@ -190,3 +190,15 @@ SHARED_CLAUDE_TOKENS=Abinaya=sk-ant-...;Monika=sk-ant-...
 Each person then sees a **Claude account** switch above the chat (My own account / Shared: Abinaya / ...). The browser
 only ever receives the labels, never the tokens. Only add a token with its owner's consent, and check that your Claude plan
 and Anthropic's terms allow sharing it; questions asked on a shared account use that person's limits.
+
+### One sign-in that also lets Claude use the Azure CLI as you (`AUTH_MODE=az_login`)
+
+Each person signs in once, with a code (`az login --use-device-code` runs on the server in a private folder for that
+person, restricted to your tenant). That login *is* the app sign-in, and Claude's `az` commands run as that person,
+so there is no second sign-in and no Entra app registration or admin approval to maintain.
+
+- `ALLOWED_USERS` and `AZURE_TENANT_ID` still decide who gets in; anyone else's sign-in folder is deleted at once.
+- Claude may only run `az boards`, `az repos`, `az pipelines` and `az devops project list|show`, one plain command at a
+  time, pinned to the selected organization, enforced by a hook before the command runs.
+- `AZ_POLICY` sets what it may do: `read` (list/show/query), `write` (also create/update/add, never delete) or `full`.
+- Logging out, expiry or a restart deletes the person's sign-in folder.

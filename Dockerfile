@@ -17,6 +17,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 COPY backend/requirements.txt ./
 RUN pip install -r requirements.txt
+# Azure CLI (Claude runs `az` as the signed-in person) + its Azure DevOps extension, installed once for everyone.
+ENV AZURE_EXTENSION_DIR=/opt/azext AZURE_CORE_COLLECT_TELEMETRY=false
+RUN pip install azure-cli  && az extension add --name azure-devops --yes
 COPY backend/app ./app
 COPY --from=web /web/dist /app/static
 ENV STATIC_DIR=/app/static HOME=/home/app

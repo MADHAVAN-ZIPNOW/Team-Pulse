@@ -16,6 +16,7 @@ export default defineConfig({
       "/auth/login": { target: backend },
       "/auth/me": { target: backend },
       "/auth/cli": { target: backend },
+      "/auth/az": { target: backend },
       "/auth/callback": { target: backend }, // lets AZURE_REDIRECT_URI point at :5173 too
       "/auth/logout": { target: backend },
     },

@@ -34,9 +34,19 @@ def az_path() -> str:
     return found
 
 
-async def _run(*args: str, timeout: float = 60) -> tuple[int, str, str]:
+def cli_env(config_dir: str | None) -> dict[str, str]:
+    """Environment for an az process. A per-person config dir keeps each person's sign-in separate."""
+    env = dict(os.environ)
+    if config_dir:
+        env["AZURE_CONFIG_DIR"] = config_dir
+    env["AZURE_CORE_COLLECT_TELEMETRY"] = "false"
+    env["AZURE_CORE_NO_COLOR"] = "true"
+    return env
+
+
+async def _run(*args: str, timeout: float = 60, config_dir: str | None = None) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
-        az_path(), *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        az_path(), *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cli_env(config_dir)
     )
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
@@ -46,37 +56,42 @@ async def _run(*args: str, timeout: float = 60) -> tuple[int, str, str]:
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
-_token_cache: dict[str, float | str] = {}
+_token_cache: dict[str, dict[str, float | str]] = {}  # keyed by az config dir ("" = the machine default)
 _token_lock = asyncio.Lock()
 
 
-async def get_access_token() -> str:
-    """Token from `az`, cached in memory until ~5 min before expiry (spawning `az` takes seconds)."""
-    now = time.time()
-    if _token_cache and float(_token_cache["expires"]) - 300 > now:
-        return str(_token_cache["token"])
+async def get_access_token(config_dir: str | None = None) -> str:
+    """Azure DevOps token from `az`, cached in memory until ~5 min before expiry (spawning `az` takes seconds).
+
+    config_dir selects whose az sign-in to use: each person has their own folder when AUTH_MODE=az_login."""
+    key = config_dir or ""
+    cached = _token_cache.get(key)
+    if cached and float(cached["expires"]) - 300 > time.time():
+        return str(cached["token"])
     async with _token_lock:
-        if _token_cache and float(_token_cache["expires"]) - 300 > time.time():
-            return str(_token_cache["token"])
+        cached = _token_cache.get(key)
+        if cached and float(cached["expires"]) - 300 > time.time():
+            return str(cached["token"])
         code, out, _ = await _run(
-            "account", "get-access-token", "--resource", AZURE_DEVOPS_RESOURCE_ID, "--output", "json"
+            "account", "get-access-token", "--resource", AZURE_DEVOPS_RESOURCE_ID, "--output", "json",
+            config_dir=config_dir,
         )
         if code != 0:
-            _token_cache.clear()
+            _token_cache.pop(key, None)
             raise AzureCliError("Not signed in to Azure CLI. Sign in again.")
         data = json.loads(out)
         expires = float(data.get("expires_on") or (time.time() + 1800))
-        _token_cache.update(token=data["accessToken"], expires=expires)
+        _token_cache[key] = {"token": data["accessToken"], "expires": expires}
         return str(data["accessToken"])
 
 
-def clear_token_cache() -> None:
-    _token_cache.clear()
+def clear_token_cache(config_dir: str | None = None) -> None:
+    _token_cache.pop(config_dir or "", None)
 
 
-async def current_user() -> dict[str, str | None] | None:
+async def current_user(config_dir: str | None = None) -> dict[str, str | None] | None:
     """Returns {name, email, tenantId} for the signed-in az account, or None."""
-    code, out, _ = await _run("account", "show", "--output", "json")
+    code, out, _ = await _run("account", "show", "--output", "json", config_dir=config_dir)
     if code != 0:
         return None
     data = json.loads(out)
@@ -84,11 +99,13 @@ async def current_user() -> dict[str, str | None] | None:
     return {"name": user, "email": user, "tenantId": data.get("tenantId")}
 
 
-async def start_device_login() -> dict[str, str]:
+async def start_device_login(config_dir: str | None = None, tenant: str | None = None) -> dict[str, str]:
     """Spawns `az login --use-device-code` and returns the code + URL the user must open."""
+    args = ["login", "--use-device-code", "--allow-no-subscriptions", "--output", "none"]
+    if tenant:
+        args += ["--tenant", tenant]  # only accounts from our company directory can finish this sign-in
     proc = await asyncio.create_subprocess_exec(
-        az_path(), "login", "--use-device-code", "--allow-no-subscriptions", "--output", "none",
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+        az_path(), *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE, env=cli_env(config_dir),
     )
     assert proc.stderr is not None
     stderr = proc.stderr

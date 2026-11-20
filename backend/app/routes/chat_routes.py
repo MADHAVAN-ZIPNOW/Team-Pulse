@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..auth.dependencies import get_ado_client, get_current_session, require_same_origin
 from ..services.session_store import Session
 from .claude_routes import effective_claude_token
+from ..services.az_policy import AzContext
 from ..azure_devops import models as m
 from ..azure_devops.client import AzureDevOpsClient
 from ..claude.azure_tools import build_azure_server
@@ -83,12 +84,16 @@ async def ask(
         context_text = f"{context_text}\n\n{ctx.to_prompt()}"
         files_analyzed, files_total, truncated = ctx.files_included, changes.total_files, ctx.truncated
 
+    az = None
+    if settings.az_enabled and session.az_dir and session.az_user:  # az_user is set once az sign-in is verified
+        az = AzContext(config_dir=session.az_dir, org=org, policy=settings.az_policy)
     server, tool_names = build_azure_server(client, org, project, repo)
     service: ClaudeCodeService = request.app.state.claude
     try:
         answer = await service.ask(
             body.question, context_text, mcp_server=server, azure_tools=tool_names, review_mode=pr_id is not None,
             oauth_token=claude_token,
+            az=az,
         )
     except ClaudeCodeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

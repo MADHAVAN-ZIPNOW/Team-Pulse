@@ -378,3 +378,165 @@ def test_token_paste_is_forgiving_and_explains_login_codes():
     assert "one-time login code" in str(exc.value)
     with pytest.raises(ValidationError):
         ClaudeTokenRequest(token="hello world")
+
+
+# ---------------------------------------------------------------- az CLI policy (Claude acting as the signed-in person)
+ORG = "https://dev.azure.com/dteksoftware"
+
+
+@pytest.mark.parametrize(
+    "cmd,policy,ok",
+    [
+        (f"az boards work-item show --id 1803 --org {ORG} --output json", "read", True),
+        (f"az boards query --wiql SELECT --org {ORG}", "read", True),
+        (f"az repos pr list --repository R --project P --organization {ORG}", "read", True),
+        (f"az boards work-item show --id 1 --org={ORG}", "read", True),
+        (f"az boards work-item update --id 1 --state Closed --org {ORG}", "read", False),   # change needs write
+        (f"az boards work-item update --id 1 --state Closed --org {ORG}", "write", True),
+        (f"az boards work-item create --title T --type Task --org {ORG}", "write", True),
+        (f"az boards work-item delete --id 1 --yes --org {ORG}", "write", False),            # delete needs full
+        (f"az boards work-item delete --id 1 --yes --org {ORG}", "full", True),
+        (f"az boards work-item delete --id 1 --destroy --org {ORG}", "write", False),
+        (f"az boards work-item relation remove --id 1 --org {ORG}", "write", False),
+        ("az boards work-item show --id 1", "read", False),                                    # org must be given
+        ("az boards work-item show --id 1 --org https://dev.azure.com/othercompany", "read", False),
+        (f"az login --use-device-code --org {ORG}", "full", False),                            # not an allowed group
+        (f"az account get-access-token --org {ORG}", "full", False),
+        (f"az rest --method delete --url https://x --org {ORG}", "full", False),
+        (f"az devops invoke --area wit --org {ORG}", "full", False),
+        (f"az devops project list --org {ORG}", "read", True),
+        (f"az boards work-item show --id 1 --org {ORG} --debug", "read", False),               # --debug leaks tokens
+        (f"az boards work-item show --id 1 --org {ORG}; rm -rf /", "full", False),
+        (f"az boards work-item show --id 1 --org {ORG} | cat", "full", False),
+        (f"az boards work-item show --id $(whoami) --org {ORG}", "full", False),
+        (f"ls -la", "full", False),
+    ],
+)
+def test_az_policy(cmd, policy, ok):
+    from app.services.az_policy import check_az_command
+
+    allowed, reason = check_az_command(cmd, "dteksoftware", policy)
+    assert allowed is ok, reason
+
+
+def test_hook_routes_bash_through_az_policy_only_when_enabled():
+    from app.claude.claude_code_service import _check_tool
+    from app.services.az_policy import AzContext
+
+    az = AzContext(config_dir="/tmp/az-user-x", org="dteksoftware", policy="read")
+    show = {"command": f"az boards work-item show --id 1 --org {ORG}"}
+    assert _check_tool("Bash", show, None, az) is None
+    assert _check_tool("Bash", {"command": f"az boards work-item delete --id 1 --org {ORG}"}, None, az)
+    assert _check_tool("Bash", {"command": "cat /etc/passwd"}, None, az)       # no local repo: only az passes
+    assert _check_tool("Bash", show, None, None)                               # az disabled: Bash stays blocked
+    opts_on = __import__("app.claude.claude_code_service", fromlist=["build_options"]).build_options(None, az=az)
+    assert opts_on.env["AZURE_CONFIG_DIR"] == "/tmp/az-user-x" and "Bash" in opts_on.allowed_tools
+
+
+def test_az_status_and_login_require_signin_and_enabled(monkeypatch):
+    from app.main import create_app
+
+    monkeypatch.setenv("AZ_ENABLED", "false")
+    get_settings.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/api/az/status").status_code == 401
+        _authed_client(app, client)
+        st = client.get("/api/az/status").json()
+        assert st["enabled"] is False and st["signedIn"] is False
+        assert client.post("/api/az/login").status_code == 404                 # disabled -> no login possible
+
+
+# ---------------------------------------------------------------- AUTH_MODE=az_login: the app sign-in IS the az login
+def _az_login_app(monkeypatch, allowed="a@example.com"):
+    from app.main import create_app
+    from app.services import azure_cli
+
+    monkeypatch.setenv("AUTH_MODE", "az_login")
+    monkeypatch.setenv("COOKIE_SECURE", "false")  # the test client talks plain http
+    monkeypatch.setenv("ALLOWED_USERS", allowed)
+    monkeypatch.setenv("AZURE_TENANT_ID", "tenant-123")
+    get_settings.cache_clear()
+    started = {}
+
+    async def fake_start(config_dir=None, tenant=None):
+        started["dir"], started["tenant"] = config_dir, tenant
+        return {"code": "ABC123XYZ", "url": "https://microsoft.com/devicelogin"}
+
+    monkeypatch.setattr(azure_cli, "start_device_login", fake_start)
+    return create_app(), azure_cli, started
+
+
+def test_az_login_flow_creates_session_with_per_person_az_folder(monkeypatch):
+    app, azure_cli, started = _az_login_app(monkeypatch)
+    state = {"user": None}
+
+    async def fake_user(config_dir=None):
+        return state["user"]
+
+    monkeypatch.setattr(azure_cli, "current_user", fake_user)
+    with TestClient(app) as client:
+        assert get_settings().az_enabled is True                                  # implied by az_login
+        r = client.post("/auth/az/start")
+        assert r.status_code == 200 and r.json()["code"] == "ABC123XYZ"
+        assert started["tenant"] == "tenant-123"                                  # restricted to our directory
+        assert client.get("/auth/az/status").json()["signedIn"] is False         # code not entered yet
+        assert client.get("/auth/me").status_code == 401
+        state["user"] = {"name": "a@example.com", "email": "A@Example.com", "tenantId": "tenant-123"}
+        done = client.get("/auth/az/status")
+        assert done.json()["signedIn"] is True
+        assert client.get("/auth/me").json()["email"] == "a@example.com"
+        session = next(iter(app.state.sessions._sessions.values()))
+        assert session.az_dir == started["dir"] and session.az_user == "a@example.com"   # Claude's az runs as this person
+        assert client.get("/api/az/status").json()["managedByLogin"] is True
+
+
+def test_az_login_rejects_people_not_allowed_or_from_other_tenants(monkeypatch):
+    import os
+
+    app, azure_cli, started = _az_login_app(monkeypatch, allowed="a@example.com")
+
+    async def outsider(config_dir=None):
+        return {"name": "x", "email": "someone@else.com", "tenantId": "tenant-123"}
+
+    monkeypatch.setattr(azure_cli, "current_user", outsider)
+    with TestClient(app) as client:
+        client.post("/auth/az/start")
+        assert os.path.isdir(started["dir"])
+        r = client.get("/auth/az/status")
+        assert r.status_code == 403 and client.get("/auth/me").status_code == 401
+        assert not os.path.exists(started["dir"])                                 # their sign-in is wiped from disk
+
+    async def other_tenant(config_dir=None):
+        return {"name": "a", "email": "a@example.com", "tenantId": "another-tenant"}
+
+    monkeypatch.setattr(azure_cli, "current_user", other_tenant)
+    with TestClient(app) as client:
+        client.post("/auth/az/start")
+        assert client.get("/auth/az/status").status_code == 403
+
+
+def test_logout_wipes_the_persons_az_folder(monkeypatch):
+    import os
+
+    app, azure_cli, started = _az_login_app(monkeypatch)
+
+    async def ok_user(config_dir=None):
+        return {"name": "a", "email": "a@example.com", "tenantId": "tenant-123"}
+
+    monkeypatch.setattr(azure_cli, "current_user", ok_user)
+    with TestClient(app) as client:
+        client.post("/auth/az/start")
+        client.get("/auth/az/status")
+        assert os.path.isdir(started["dir"])
+        assert client.post("/auth/logout").status_code == 204
+        assert not os.path.exists(started["dir"])
+
+
+def test_az_start_not_available_in_other_modes(monkeypatch):
+    from app.main import create_app
+
+    monkeypatch.setenv("AUTH_MODE", "")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as client:
+        assert client.post("/auth/az/start").status_code == 404

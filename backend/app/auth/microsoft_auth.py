@@ -103,7 +103,7 @@ class MicrosoftAuth:
             from ..services import azure_cli
 
             try:
-                return await azure_cli.get_access_token()
+                return await azure_cli.get_access_token(session.az_dir)
             except azure_cli.AzureCliError as exc:
                 self.sessions.delete(session.id)
                 raise AuthError(str(exc), 401) from exc

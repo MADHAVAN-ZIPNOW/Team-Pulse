@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import hmac
 import secrets
+import shutil
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,9 +30,19 @@ class Session:
     account: dict[str, Any]
     user: UserProfile
     claude_token: str | None = field(default=None, repr=False)  # this person's own Claude token
+    az_dir: str | None = None  # this person's private Azure CLI config folder (their own az sign-in)
+    az_user: str | None = None  # who az is signed in as, once verified
     claude_source: str = "own"  # "own" or the label of a shared account chosen by the owner
     created_at: float = field(default_factory=time.time)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+def cleanup_az(session: "Session") -> None:
+    """Remove the person's az sign-in folder (tokens) from disk."""
+    if session.az_dir:
+        shutil.rmtree(session.az_dir, ignore_errors=True)
+    session.az_dir = None
+    session.az_user = None
 
 
 class SessionStore:
@@ -55,12 +66,16 @@ class SessionStore:
         return session
 
     def delete(self, session_id: str) -> None:
-        self._sessions.pop(session_id, None)
+        session = self._sessions.pop(session_id, None)
+        if session is not None:
+            cleanup_az(session)
 
     def _purge(self) -> None:
         now = time.time()
         for sid in [s.id for s in self._sessions.values() if now - s.created_at > self._ttl]:
-            self._sessions.pop(sid, None)
+            expired = self._sessions.pop(sid, None)
+            if expired is not None:
+                cleanup_az(expired)
 
 
 class PendingFlowStore:
