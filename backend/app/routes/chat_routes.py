@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..auth.dependencies import get_ado_client, get_current_session, require_same_origin
+from ..services.session_store import Session
 from ..azure_devops import models as m
 from ..azure_devops.client import AzureDevOpsClient
 from ..claude.azure_tools import build_azure_server
@@ -48,7 +49,10 @@ async def ask(
     request: Request,
     client: Annotated[AzureDevOpsClient, Depends(get_ado_client)],
     settings: Annotated[Settings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_current_session)],
 ) -> AskResponse:
+    if settings.require_user_claude_token and not session.claude_token:
+        raise HTTPException(status_code=400, detail="Connect your own Claude account first (paste your Claude token above the chat).")
     org, project, repo, pr_id = body.organization, body.project, body.repository, body.pull_request_id
     context_text = scope_description(body)
     files_analyzed = files_total = 0
@@ -81,7 +85,8 @@ async def ask(
     service: ClaudeCodeService = request.app.state.claude
     try:
         answer = await service.ask(
-            body.question, context_text, mcp_server=server, azure_tools=tool_names, review_mode=pr_id is not None
+            body.question, context_text, mcp_server=server, azure_tools=tool_names, review_mode=pr_id is not None,
+            oauth_token=session.claude_token,
         )
     except ClaudeCodeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

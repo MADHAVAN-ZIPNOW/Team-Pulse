@@ -170,3 +170,11 @@ container using your subscription through a long-lived token.
 
 Notes: sessions are in memory, so keep one instance (a restart signs everyone out). `ALLOWED_USERS` limits who can
 spend your subscription. Treat the token like a password and revoke it if it leaks. Do not use `AUTH_MODE=azure_cli` on a server.
+
+### Each person uses their own Claude account (hosted)
+
+Set `REQUIRE_USER_CLAUDE_TOKEN=true`. Each person then pastes their own token (`claude setup-token`) in a box above
+the chat. The token lives only in that person's server-side session (memory), is never returned by the API, is passed
+to Claude only for that person's questions (with a private, throw-away Claude config folder per question) and is
+dropped on logout or restart. With this setting the shared `CLAUDE_CODE_OAUTH_TOKEN` is never used, so you can
+delete it from the server.

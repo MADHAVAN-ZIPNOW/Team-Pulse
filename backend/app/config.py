@@ -41,6 +41,7 @@ class Settings:
     cookie_secure: bool
     auth_mode: str
     allowed_users: tuple[str, ...]
+    require_user_claude_token: bool
     session_ttl_seconds: int = 8 * 60 * 60
 
     # Limits for what is sent to Claude Code
@@ -87,6 +88,7 @@ def get_settings() -> Settings:
         backend_port=int(os.getenv("BACKEND_PORT", "8000") or "8000"),
         # Browsers treat http://localhost as a secure context, so Secure cookies work locally.
         cookie_secure=_bool("COOKIE_SECURE", True),
+        require_user_claude_token=_bool("REQUIRE_USER_CLAUDE_TOKEN", False),
         allowed_users=tuple(u.strip().lower() for u in os.getenv("ALLOWED_USERS", "").split(",") if u.strip()),
         auth_mode="azure_cli" if os.getenv("AUTH_MODE", "").strip().lower() == "azure_cli" else "msal",
     )

@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, type AskScope } from "../lib/api";
+import { useAsync } from "../hooks/useAsync";
 import { Card, ErrorState, Spinner } from "./common";
+import { ClaudeAccount } from "./ClaudeAccount";
 
 const PR_SUGGESTIONS = [
   "Summarize this PR",
@@ -47,7 +49,9 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy]);
 
-  const disabled = scope === null || busy;
+  const claude = useAsync(() => api.claudeStatus(), []);
+  const needsToken = !!claude.data?.required && !claude.data.hasToken;
+  const disabled = scope === null || busy || needsToken;
   const suggestions = prId !== null ? PR_SUGGESTIONS : scope?.repository ? REPO_SUGGESTIONS : PROJECT_SUGGESTIONS;
   const target = prId !== null ? `PR #${prId}` : scope?.repository ? `repository ${scope.repository}` : scope ? `project ${scope.project}` : null;
 
@@ -75,6 +79,11 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
   return (
     <Card title={target ? `Ask Claude · ${target}` : "Ask Claude"}>
       <div className="flex h-[70vh] min-h-[420px] flex-col lg:h-[calc(100vh-215px)]">
+        {claude.data?.required && (
+          <div className="mb-3">
+            <ClaudeAccount hasToken={claude.data.hasToken} onChanged={claude.reload} />
+          </div>
+        )}
         <div className="flex-1 space-y-3 overflow-y-auto pr-1" aria-live="polite">
           {messages.length === 0 && !busy && (
             <p className="text-sm text-slate-500">
@@ -137,7 +146,7 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
                   void send(input);
                 }
               }}
-              placeholder={scope === null ? "Select a project first" : `Ask about ${target}…`}
+              placeholder={needsToken ? "Connect your Claude account first" : scope === null ? "Select a project first" : `Ask about ${target}…`}
               className="w-full resize-none rounded border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-50"
             />
             <p className="text-right text-[10px] text-slate-600">{input.length}/{MAX_LEN}</p>

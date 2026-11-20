@@ -28,6 +28,7 @@ class Session:
     msal_app: Any  # msal.ConfidentialClientApplication holding this user's token cache
     account: dict[str, Any]
     user: UserProfile
+    claude_token: str | None = field(default=None, repr=False)  # this person's own Claude token
     created_at: float = field(default_factory=time.time)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 

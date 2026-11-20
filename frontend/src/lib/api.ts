@@ -35,6 +35,7 @@ export interface CommentThread {
 export interface AskResponse {
   answer: string; pullRequestId?: number | null; filesAnalyzed: number; filesTotal: number; contextTruncated: boolean;
 }
+export interface ClaudeStatus { required: boolean; hasToken: boolean }
 export interface AskScope { organization: string; project: string; repository?: string }
 export interface PrRef { organization: string; project: string; repository: string }
 
@@ -66,6 +67,14 @@ const prPath = (id: number, r: PrRef, sub = "") => `/api/azure/pull-requests/${i
 export const api = {
   me: () => request<User>("/auth/me"),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
+  claudeStatus: () => request<ClaudeStatus>("/api/claude/status"),
+  saveClaudeToken: (token: string) =>
+    request<void>("/api/claude/token", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    }),
+  removeClaudeToken: () => request<void>("/api/claude/token", { method: "DELETE" }),
   organizations: () => request<Organization[]>("/api/azure/organizations"),
   projects: (organization: string) => request<Project[]>(`/api/azure/projects?${qs({ organization })}`),
   repositories: (organization: string, project: string) =>

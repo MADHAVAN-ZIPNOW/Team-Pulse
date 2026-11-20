@@ -258,3 +258,73 @@ def test_attachment_text_extraction():
     assert kind == "docx" and "Hello" in text and "World" in text
     assert extract_document_text(b"plain text")[0] == "text"
     assert extract_document_text(b"\x00\x01\x02binary") is None
+
+
+# ---------------------------------------------------------------- per-user Claude account
+GOOD_TOKEN = "sk-ant-oat01-" + "A1b2C3d4" * 6
+
+
+@pytest.mark.parametrize("token,ok", [(GOOD_TOKEN, True), ("  " + GOOD_TOKEN + "  ", True), ("sk-ant-short", False),
+                                       (GOOD_TOKEN + "Store this", False), ("not-a-token", False), ("", False)])
+def test_claude_token_validation(token, ok):
+    from app.schemas.claude import ClaudeTokenRequest
+
+    if ok:
+        assert ClaudeTokenRequest(token=token).token == GOOD_TOKEN
+    else:
+        with pytest.raises(ValidationError):
+            ClaudeTokenRequest(token=token)
+
+
+def _authed_client(app, client):
+    from app.services.session_store import UserProfile
+
+    session = app.state.sessions.create(None, {}, UserProfile("Test User", "t@example.com", "tid", None))
+    client.cookies.set("pra_session", sign_value(session.id, get_settings().session_secret))
+    return session
+
+
+def test_claude_token_lifecycle_never_echoed(monkeypatch):
+    from app.main import create_app
+
+    monkeypatch.setenv("REQUIRE_USER_CLAUDE_TOKEN", "true")
+    get_settings.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/api/claude/status").status_code == 401  # needs sign-in
+        session = _authed_client(app, client)
+        assert client.get("/api/claude/status").json() == {"required": True, "hasToken": False}
+        assert client.put("/api/claude/token", json={"token": "bad"}).status_code == 422
+        r = client.put("/api/claude/token", json={"token": GOOD_TOKEN})
+        assert r.status_code == 204 and GOOD_TOKEN not in r.text
+        status = client.get("/api/claude/status")
+        assert status.json() == {"required": True, "hasToken": True} and GOOD_TOKEN not in status.text
+        assert GOOD_TOKEN not in client.get("/auth/me").text
+        assert session.claude_token == GOOD_TOKEN and GOOD_TOKEN not in repr(session)
+        assert client.put("/api/claude/token", json={"token": GOOD_TOKEN}, headers={"Origin": "http://evil.com"}).status_code == 403
+        assert client.delete("/api/claude/token").status_code == 204
+        assert session.claude_token is None
+
+
+def test_ask_blocked_without_own_token_when_required(monkeypatch):
+    from app.main import create_app
+
+    monkeypatch.setenv("REQUIRE_USER_CLAUDE_TOKEN", "true")
+    get_settings.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        _authed_client(app, client)
+        r = client.post("/api/ask", json=valid_body())
+        assert r.status_code == 400 and "Claude account" in r.json()["detail"]
+
+
+def test_options_use_the_persons_own_token():
+    from pathlib import Path
+
+    from app.claude.claude_code_service import build_options
+
+    own = build_options(None, oauth_token=GOOD_TOKEN, config_dir="/tmp/x")
+    assert own.env["CLAUDE_CODE_OAUTH_TOKEN"] == GOOD_TOKEN and own.env["CLAUDE_CONFIG_DIR"] == "/tmp/x"
+    assert own.env["ANTHROPIC_API_KEY"] == ""
+    shared = build_options(Path.cwd().resolve())
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in shared.env

@@ -13,6 +13,7 @@ import asyncio
 import logging
 import re
 import shlex
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -220,7 +221,16 @@ def build_options(
     mcp_server: McpSdkServerConfig | None = None,
     azure_tools: list[str] | None = None,
     review_mode: bool = False,
+    oauth_token: str | None = None,
+    config_dir: str | None = None,
 ) -> ClaudeAgentOptions:
+    env = {"ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": ""}
+    if oauth_token:
+        # This person's own Claude account. Overrides any shared token in the server environment, and a
+        # private config dir keeps their conversation history away from everyone else's.
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+        if config_dir:
+            env["CLAUDE_CONFIG_DIR"] = config_dir
     local = LOCAL_TOOLS if root is not None else []
     if root is not None:
         cwd = str(root)
@@ -240,7 +250,7 @@ def build_options(
         hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[make_pre_tool_hook(root)])]},
         setting_sources=[],  # ignore the repo's / user's settings, hooks and CLAUDE.md permissions
         max_turns=40,
-        env={"ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": ""},
+        env=env,
     )
 
 
@@ -261,9 +271,11 @@ class ClaudeCodeService:
         mcp_server: McpSdkServerConfig | None = None,
         azure_tools: list[str] | None = None,
         review_mode: bool = False,
+        oauth_token: str | None = None,
     ) -> str:
         root = resolve_repo(self._repo_path)
-        options = build_options(root, mcp_server, azure_tools, review_mode)
+        config_dir = tempfile.mkdtemp(prefix="claude-user-") if oauth_token else None
+        options = build_options(root, mcp_server, azure_tools, review_mode, oauth_token, config_dir)
         prompt = build_user_prompt(question, context)
         async with self._sem:
             try:
@@ -281,6 +293,9 @@ class ClaudeCodeService:
             except Exception as exc:  # noqa: BLE001 - never leak internals to the client
                 logger.exception("Unexpected Claude Code failure")
                 raise ClaudeCodeError("Claude Code failed unexpectedly. Check the backend logs.") from exc
+            finally:
+                if config_dir:
+                    shutil.rmtree(config_dir, ignore_errors=True)
 
     async def _run(self, prompt: str, options: ClaudeAgentOptions) -> str:
         chunks: list[str] = []

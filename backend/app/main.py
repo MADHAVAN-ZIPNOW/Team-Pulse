@@ -19,7 +19,7 @@ from .auth.microsoft_auth import MicrosoftAuth
 from .azure_devops.client import AzureDevOpsError
 from .claude.claude_code_service import ClaudeCodeService
 from .config import Settings, get_settings
-from .routes import auth_routes, azure_routes, chat_routes
+from .routes import auth_routes, azure_routes, chat_routes, claude_routes
 from .services.rate_limit import RateLimiter
 from .services.session_store import PendingFlowStore, SessionStore
 
@@ -97,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_routes.router)
     app.include_router(azure_routes.router, dependencies=[Depends(get_current_session)])
     app.include_router(chat_routes.router)
+    app.include_router(claude_routes.router)
     _mount_frontend(app)
     return app
 
