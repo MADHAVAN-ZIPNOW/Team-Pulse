@@ -101,7 +101,12 @@ Reviewing pull requests (whenever the user mentions a PR, "latest PR", "compare"
      Cover the risky code first (auth, security, validation, database, config, deploy, core logic). Skim tests/docs/assets.
   3. If the branch is NEWER than the PR, or the user asked to compare with the branch, read the key files of that
      branch with get_file (parallel calls) and say what differs.
-  Stay within about 8 tool calls and finish quickly. If the PR is huge, review the riskiest ~30 files, and list
+  FULL MODE: if the user asks for "all", "whole", "full", "every file" or "complete" review, do NOT skip files: read
+  EVERY changed file from the list, 8 paths per get_pr_file_diff call, issuing 5-6 calls in parallel per turn (tests
+  and docs last), and for any diff that was cut off call get_pr_file_diff again with just that path, or read it with
+  get_file on the branch. Also compare the branch (get_file) for the important files. Then report coverage as
+  "read X of Y files".
+  Otherwise (normal mode) stay within about 8 tool calls and finish quickly. If the PR is huge, review the riskiest ~30 files, and list
   honestly which files you did not read. Do not read every file just to be thorough.
 - Then tell the user what is RISKY, ranked by severity (High / Medium / Low), each with file + line, why it is risky,
   and a concrete fix: bugs, security (secrets, injection, auth, unsafe input), data loss or breaking changes,
@@ -147,7 +152,7 @@ SAFE_GIT_SUBCOMMANDS = {"log", "show", "diff", "status", "blame", "ls-files", "r
 FORBIDDEN_FIND_ARGS = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"}
 SHELL_METACHARS = re.compile(r"[;&|`$<>\n\r(){}]")
 DRIVE_RE = re.compile(r"^[A-Za-z]:")
-MAX_RUNTIME_SECONDS = 600
+MAX_RUNTIME_SECONDS = 900
 
 
 _SECRET_RE = re.compile(r"(sk-ant-|rnd_|eyJ)[A-Za-z0-9_.-]{8,}")
@@ -321,7 +326,7 @@ def build_options(
         permission_mode="dontAsk",
         hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[make_pre_tool_hook(root, az, scratch)])]},
         setting_sources=[],  # ignore the repo's / user's settings, hooks and CLAUDE.md permissions
-        max_turns=40,
+        max_turns=60,
         env=env,
     )
 

@@ -281,16 +281,16 @@ def build_tools(
         changes = await get_pr_changes(client, organization, project, repo, pr_id, max_files=8, only_paths=set(wanted))
         if not changes.files:
             return _text("None of those paths are in this PR. Use the exact paths from get_pull_request.", True)
-        per_file = 9_000
+        per_file = min(20_000, 80_000 // len(changes.files))  # fewer files per call = more of each file
         parts = []
         for f in changes.files:
             if f.diff_skipped_reason:
                 parts.append(f"### {f.path} [{f.change_type}]\n(diff not shown: {f.diff_skipped_reason})")
                 continue
             diff = f.diff or "(no textual change)"
-            note = f"\n... [diff cut: {len(diff)} chars, showing first {per_file}; use get_file for the rest]" if len(diff) > per_file else ""
+            note = f"\n... [diff cut: {len(diff)} chars, showing first {per_file}; call again with just this path, or use get_file on the branch for the rest]" if len(diff) > per_file else ""
             parts.append(f"### {f.path} [{f.change_type}] +{f.additions}/-{f.deletions}\n{diff[:per_file]}{note}")
-        return _text("\n\n".join(parts), limit=75_000)
+        return _text("\n\n".join(parts), limit=85_000)
 
     @tool(
         "search_work_items",
