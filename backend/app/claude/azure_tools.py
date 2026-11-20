@@ -17,7 +17,6 @@ from ..azure_devops import models as m
 from ..azure_devops.client import AzureDevOpsClient, AzureDevOpsError
 from ..config import get_settings
 from ..services.attachments import extract_document_text
-from ..services.pr_context import build_pr_context
 from ..services.pull_requests import get_pr_changes, latest_iteration
 
 logger = logging.getLogger("pr_assistant.tools")
@@ -41,6 +40,20 @@ def _text(value: str, error: bool = False, limit: int = MAX_TEXT_CHARS) -> dict[
     if error:
         result["is_error"] = True
     return result
+
+
+_RISKY = re.compile(
+    r"auth|login|token|secret|password|crypt|security|permission|valid|citation|sql|migrat|schema|model|config|env|"
+    r"docker|deploy|workflow|pipeline|payment|upload|api|route|service|pipeline",
+    re.IGNORECASE,
+)
+_LOW_VALUE = re.compile(r"(^|/)(tests?|docs?|assets|static)/|\.(md|txt|lock|svg|png|jpg|json|csv|snap)$|test_|\.test\.", re.IGNORECASE)
+
+
+def _risk_score(path: str) -> int:
+    """Rough 'look at this first' score from the path alone: security/data/config code high, tests/docs/assets low."""
+    score = len(_RISKY.findall(path))
+    return score - 3 if _LOW_VALUE.search(path) else score
 
 
 def _schema(props: dict[str, tuple[str, str]], required: list[str] | None = None) -> dict[str, Any]:
@@ -190,38 +203,94 @@ def build_tools(
 
     @tool(
         "get_pull_request",
-        "Get a pull request's metadata, commits, changed files, unified diff and review comments.",
-        _schema(
-            {
-                "project": PROJ, "repository": REPO, "pull_request_id": ("integer", "Pull request ID"),
-                "offset": ("integer", "Large PRs come in pages of 60000 chars; pass the offset the previous page gave"),
-            },
-            ["pull_request_id"],
-        ),
+        "FAST overview of a pull request: metadata, commits, review comments and the list of ALL changed files "
+        "(riskiest first, with +added/-removed line counts), plus whether the source branch has moved since the PR. "
+        "It does NOT include diffs: read them with get_pr_file_diff.",
+        _schema({"project": PROJ, "repository": REPO, "pull_request_id": ("integer", "Pull request ID")}, ["pull_request_id"]),
     )
     @guarded
     async def get_pull_request(args: dict[str, Any]) -> dict[str, Any]:
         project, repo, pr_id = project_of(args), repo_of(args), int(args["pull_request_id"])
-        raw, iterations, commits, threads = await _gather(
+        raw, iterations, commits, threads, branches = await _gather(
             client.get_pull_request(organization, project, repo, pr_id),
             client.list_iterations(organization, project, repo, pr_id),
             client.list_commits(organization, project, repo, pr_id),
             client.list_threads(organization, project, repo, pr_id),
+            client.list_branches(organization, project, repo),
         )
         latest = latest_iteration(iterations)
-        pr = m.parse_pr_detail(raw, latest["id"] if latest else None)
-        changes = await get_pr_changes(client, organization, project, repo, pr_id, max_files=settings.max_changed_files)
-        ctx = build_pr_context(
-            pr, [m.parse_commit(c) for c in commits], changes, m.parse_threads(threads),
-            max_files=settings.max_changed_files, max_chars_per_file=settings.max_diff_chars_per_file,
-            max_chars_total=settings.max_diff_chars_total, max_comments=settings.max_comments,
-        )
-        # Pages of 60k chars stay under Claude Code's tool-output limit (bigger results get saved to a file instead).
-        full, offset, page = ctx.to_prompt(), max(int(args.get("offset") or 0), 0), 60_000
-        piece = full[offset : offset + page]
-        if offset + page < len(full):
-            piece += f"\n\n[... PAGE END. {len(full) - offset - page} more chars: call get_pull_request again with offset={offset + page}]"
-        return _text(piece, limit=page + 300)
+        entries = await client.get_iteration_changes(organization, project, repo, pr_id, latest["id"]) if latest else []
+        files = [
+            (e["item"]["path"], str(e.get("changeType") or "edit"))
+            for e in entries
+            if (e.get("item") or {}).get("path") and not (e.get("item") or {}).get("isFolder")
+        ]
+        files.sort(key=lambda f: (-_risk_score(f[0]), f[0]))
+        src = (raw.get("sourceRefName") or "")
+        pr_commit = ((latest or {}).get("sourceRefCommit") or {}).get("commitId") or ""
+        head = next((b.get("objectId") for b in branches if b.get("name") == src), "")
+        if head and pr_commit:
+            branch_note = "same as the PR (nothing newer)" if head == pr_commit else f"NEWER than the PR (branch head {head[:8]}, PR {pr_commit[:8]}): review get_file on the branch too"
+        else:
+            branch_note = "unknown"
+        lines = [
+            f"PR #{pr_id}: {raw.get('title')}",
+            f"Status: {raw.get('status')}{' (draft)' if raw.get('isDraft') else ''}  Author: {(raw.get('createdBy') or {}).get('displayName')}",
+            f"{src.replace('refs/heads/', '')} -> {(raw.get('targetRefName') or '').replace('refs/heads/', '')}",
+            f"Source branch vs PR: {branch_note}",
+            f"Description: {_strip_html(raw.get('description'))[:2000] or '(none)'}",
+            "",
+            f"Commits ({len(commits)}):",
+            *[f"- {c.get('commitId', '')[:8]} {(c.get('comment') or '').splitlines()[0][:150] if c.get('comment') else ''}" for c in commits[:40]],
+            "",
+            f"Changed files ({len(files)}), riskiest first. Read diffs with get_pr_file_diff (up to 8 paths per call):",
+            *[f"- [{ct}] {p}" for p, ct in files[:400]],
+        ]
+        if len(files) > 400:
+            lines.append(f"... {len(files) - 400} more files not listed.")
+        human = [
+            t for t in threads
+            if t.get("comments") and (t["comments"][0].get("commentType") != "system") and not t.get("isDeleted")
+        ]
+        if human:
+            lines += ["", f"Review comments ({len(human)} threads):"]
+            for t in human[:25]:
+                c = t["comments"][0]
+                where = (t.get("threadContext") or {}).get("filePath") or ""
+                lines.append(f"- [{t.get('status')}] {where} {(c.get('author') or {}).get('displayName')}: {(c.get('content') or '')[:300]}")
+        return _text("\n".join(lines))
+
+    @tool(
+        "get_pr_file_diff",
+        "Unified diff (what changed) for specific files of a pull request. Pass up to 8 paths from get_pull_request, "
+        "comma-separated. Call it several times in parallel for more files.",
+        _schema(
+            {
+                "project": PROJ, "repository": REPO, "pull_request_id": ("integer", "Pull request ID"),
+                "paths": ("string", "Comma-separated file paths exactly as listed, max 8, e.g. /backend/app/a.py,/backend/app/b.py"),
+            },
+            ["pull_request_id", "paths"],
+        ),
+    )
+    @guarded
+    async def get_pr_file_diff(args: dict[str, Any]) -> dict[str, Any]:
+        project, repo, pr_id = project_of(args), repo_of(args), int(args["pull_request_id"])
+        wanted = [p.strip() for p in str(args.get("paths") or "").split(",") if p.strip()][:8]
+        if not wanted:
+            return _text("Give at least one path.", True)
+        changes = await get_pr_changes(client, organization, project, repo, pr_id, max_files=8, only_paths=set(wanted))
+        if not changes.files:
+            return _text("None of those paths are in this PR. Use the exact paths from get_pull_request.", True)
+        per_file = 9_000
+        parts = []
+        for f in changes.files:
+            if f.diff_skipped_reason:
+                parts.append(f"### {f.path} [{f.change_type}]\n(diff not shown: {f.diff_skipped_reason})")
+                continue
+            diff = f.diff or "(no textual change)"
+            note = f"\n... [diff cut: {len(diff)} chars, showing first {per_file}; use get_file for the rest]" if len(diff) > per_file else ""
+            parts.append(f"### {f.path} [{f.change_type}] +{f.additions}/-{f.deletions}\n{diff[:per_file]}{note}")
+        return _text("\n\n".join(parts), limit=75_000)
 
     @tool(
         "search_work_items",
@@ -349,7 +418,7 @@ def build_tools(
 
     tools = [
         list_repositories, list_branches, list_files, get_file, list_pull_requests,
-        get_pull_request, search_work_items, get_work_item, get_attachment,
+        get_pull_request, get_pr_file_diff, search_work_items, get_work_item, get_attachment,
     ]
     return tools
 

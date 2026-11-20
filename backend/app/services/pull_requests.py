@@ -45,6 +45,7 @@ async def get_pr_changes(
     pr_id: int,
     max_files: int = MAX_DIFF_FILES,
     with_diffs: bool = True,
+    only_paths: set[str] | None = None,
 ) -> ChangesResponse:
     iterations = await client.list_iterations(organization, project, repository, pr_id)
     latest = latest_iteration(iterations)
@@ -56,6 +57,9 @@ async def get_pr_changes(
 
     entries = await client.get_iteration_changes(organization, project, repository, pr_id, iteration_id)
     entries = [e for e in entries if (e.get("item") or {}).get("path") and not (e.get("item") or {}).get("isFolder")]
+    if only_paths is not None:  # the caller picked specific files: ignore everything else
+        wanted = {p.lower() for p in only_paths}
+        entries = [e for e in entries if e["item"]["path"].lower() in wanted]
     total = len(entries)
     selected = entries[:max_files]
 
