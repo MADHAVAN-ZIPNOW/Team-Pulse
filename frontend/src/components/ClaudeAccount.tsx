@@ -75,7 +75,10 @@ export function ClaudeAccount({ status, onChanged }: { status: ClaudeStatus; onC
       <p className="font-semibold text-slate-200">Connect your Claude account</p>
       <ol className="list-decimal space-y-0.5 pl-5 text-xs text-slate-300">
         <li>Open a terminal on your computer and run <code className="rounded bg-white px-1">claude setup-token</code>.</li>
-        <li>Sign in with your own Claude account and copy the token it prints (starts with <code>sk-ant-</code>).</li>
+        <li>
+          Sign in with your own Claude account. If the browser shows a short <em>code</em>, paste that code into the terminal (not here).
+          Then copy the token the terminal prints (starts with <code>sk-ant-</code>).
+        </li>
         <li>Paste it below. Your questions then use <strong>your</strong> Claude limits, not anyone else&apos;s.</li>
       </ol>
       <div className="flex gap-2">

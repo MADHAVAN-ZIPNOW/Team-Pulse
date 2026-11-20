@@ -265,7 +265,7 @@ GOOD_TOKEN = "sk-ant-oat01-" + "A1b2C3d4" * 6
 
 
 @pytest.mark.parametrize("token,ok", [(GOOD_TOKEN, True), ("  " + GOOD_TOKEN + "  ", True), ("sk-ant-short", False),
-                                       (GOOD_TOKEN + "Store this", False), ("not-a-token", False), ("", False)])
+                                       (GOOD_TOKEN + "Store this", True), ("not-a-token", False), ("", False)])
 def test_claude_token_validation(token, ok):
     from app.schemas.claude import ClaudeTokenRequest
 
@@ -363,3 +363,18 @@ def test_switching_accounts_and_effective_token(monkeypatch):
         client.put("/api/claude/source", json={"source": "own"})
         assert effective_claude_token(session, settings) == GOOD_TOKEN     # and back to your own
         assert client.put("/api/claude/source", json={"source": "Abinaya"}, headers={"Origin": "http://evil.com"}).status_code == 403
+
+
+def test_token_paste_is_forgiving_and_explains_login_codes():
+    from app.schemas.claude import ClaudeTokenRequest, normalize_claude_token
+
+    wrapped = GOOD_TOKEN[:40] + "  \r\n " + GOOD_TOKEN[40:]
+    assert normalize_claude_token(wrapped) == GOOD_TOKEN                                  # terminal wrap / padding
+    assert normalize_claude_token(f"export CLAUDE_CODE_OAUTH_TOKEN={GOOD_TOKEN}") == GOOD_TOKEN
+    assert normalize_claude_token(f'"{GOOD_TOKEN}"\nStore this token securely.') == GOOD_TOKEN  # glued trailing text
+    code = "HDBm4Jm01eAAdpWGJfbnZnNNKzuUv8BExg1kcUXtvLcEKo1I#3fXCsWFbDCLKumGU7PSgXe_lZ-CE-eqX4IiUcFVwLjE"
+    with pytest.raises(ValidationError) as exc:
+        ClaudeTokenRequest(token=code)
+    assert "one-time login code" in str(exc.value)
+    with pytest.raises(ValidationError):
+        ClaudeTokenRequest(token="hello world")

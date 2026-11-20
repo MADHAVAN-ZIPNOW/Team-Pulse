@@ -77,7 +77,11 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-        fields = sorted({".".join(str(p) for p in e["loc"][1:]) or str(e["loc"][0]) for e in exc.errors()})
+        errors = exc.errors()
+        custom = [e["msg"].removeprefix("Value error, ") for e in errors if e["type"] == "value_error"]
+        if custom:  # messages we wrote ourselves are safe and more useful than a field list
+            return JSONResponse({"detail": f"Invalid request: {custom[0]}."}, status_code=422)
+        fields = sorted({".".join(str(p) for p in e["loc"][1:]) or str(e["loc"][0]) for e in errors})
         return JSONResponse({"detail": f"Invalid request: check {', '.join(fields)}."}, status_code=422)
 
     @app.exception_handler(Exception)
