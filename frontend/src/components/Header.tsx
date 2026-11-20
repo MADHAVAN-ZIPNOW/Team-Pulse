@@ -6,10 +6,8 @@ export function Header({ user, onLogout }: { user: User; onLogout: () => void })
     <header className="sticky top-0 z-10 border-b border-slate-800 bg-white">
       <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-3 px-4 py-2">
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded bg-sky-600 text-white" aria-hidden>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-linear-to-br from-[#2b88d8] via-[#7160e8] to-[#d46ef0] text-white" aria-hidden>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z" /></svg>
           </span>
           <h1 className="text-base font-semibold text-slate-100">Azure DevOps PR Assistant</h1>
         </div>

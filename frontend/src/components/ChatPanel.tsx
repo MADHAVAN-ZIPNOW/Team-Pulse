@@ -3,41 +3,113 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, type AskScope } from "../lib/api";
 import { useAsync } from "../hooks/useAsync";
-import { Card, ErrorState, Spinner } from "./common";
+import { ErrorState } from "./common";
 import { ClaudeAccount } from "./ClaudeAccount";
 import { AzAccount } from "./AzAccount";
 
-const PR_SUGGESTIONS = [
-  "Summarize this PR",
-  "What are the risks?",
-  "Are there security issues?",
-  "What tests are missing?",
-  "Explain the changes in simple terms",
-  "Which files need closest review?",
+interface Suggestion { title: string; text: string; icon: string }
+
+const PR_SUGGESTIONS: Suggestion[] = [
+  { icon: "🛡️", title: "Review this PR", text: "Review this pull request completely and tell me what is risky, with a verdict" },
+  { icon: "🔍", title: "Security check", text: "Are there security issues in this PR?" },
+  { icon: "🧪", title: "Missing tests", text: "What tests are missing in this PR?" },
+  { icon: "💡", title: "Explain simply", text: "Explain the changes in this PR in simple terms" },
 ];
-const REPO_SUGGESTIONS = [
-  "Explain the structure of the latest code",
-  "What are the active pull requests about?",
-  "What tasks are in progress?",
-  "Which work items have attachments or screenshots?",
+const REPO_SUGGESTIONS: Suggestion[] = [
+  { icon: "🛡️", title: "Review latest PR", text: "Review the latest pull request completely and compare it with its branch. Tell me what is risky and give a verdict" },
+  { icon: "🗂️", title: "Code structure", text: "Explain the structure of the latest code" },
+  { icon: "🔀", title: "Active PRs", text: "What are the active pull requests about?" },
+  { icon: "🖼️", title: "Screenshots", text: "Which work items have attachments or screenshots?" },
 ];
-const PROJECT_SUGGESTIONS = [
-  "What tasks are in progress and who is working on them?",
-  "Summarize the open work items",
-  "Which repositories are in this project?",
-  "Which work items have attachments or screenshots?",
+const PROJECT_SUGGESTIONS: Suggestion[] = [
+  { icon: "✅", title: "Work in progress", text: "What tasks are in progress and who is working on them?" },
+  { icon: "📋", title: "Open work items", text: "Summarize the open work items" },
+  { icon: "📦", title: "Repositories", text: "Which repositories are in this project?" },
+  { icon: "🖼️", title: "Screenshots", text: "Which work items have attachments or screenshots?" },
+];
+const STAGES = [
+  "Reading your Azure DevOps…",
+  "Opening pull requests, files and attachments…",
+  "Comparing code and checking risks…",
+  "Writing the answer…",
 ];
 const MAX_LEN = 2000;
 
 interface Msg { role: "user" | "assistant"; text: string; note?: string }
 
-export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScope | null }) {
+function Sparkle({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z" />
+    </svg>
+  );
+}
+
+function CopilotBadge({ size = 28 }: { size?: number }) {
+  return (
+    <span
+      className="flex shrink-0 items-center justify-center rounded-full bg-linear-to-br from-[#2b88d8] via-[#7160e8] to-[#d46ef0] text-white shadow-sm"
+      style={{ width: size, height: size }}
+      aria-hidden
+    >
+      <Sparkle size={Math.round(size * 0.55)} />
+    </span>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+          setTimeout(() => setDone(false), 1500);
+        } catch { /* clipboard may be blocked */ }
+      }}
+      className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-950 hover:text-slate-200"
+    >
+      {done ? "✓ Copied" : "Copy"}
+    </button>
+  );
+}
+
+function Thinking({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const secs = Math.floor((now - startedAt) / 1000);
+  const stage = STAGES[Math.min(Math.floor(secs / 8), STAGES.length - 1)];
+  return (
+    <div className="flex gap-3">
+      <CopilotBadge />
+      <div className="pt-1">
+        <div className="flex items-center gap-1.5" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="h-2 w-2 animate-bounce rounded-full bg-[#7160e8]" style={{ animationDelay: `${i * 150}ms` }} />
+          ))}
+        </div>
+        <p className="mt-2 text-sm text-slate-500" role="status">
+          {stage} <span className="text-slate-600">{secs}s</span>
+        </p>
+        {secs > 20 && <p className="text-xs text-slate-600">Big reviews can take a few minutes. You can keep this page open.</p>}
+      </div>
+    </div>
+  );
+}
+
+export function ChatPanel({ prId, scope, userName }: { prId: number | null; scope: AskScope | null; userName: string }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [startedAt, setStartedAt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
 
   // A new PR starts a fresh conversation.
   useEffect(() => {
@@ -47,15 +119,23 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
   }, [prId, scope?.organization, scope?.project, scope?.repository]);
 
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
+    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, busy]);
+
+  useEffect(() => {  // grow the box with the text, up to about 6 lines
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+  }, [input]);
 
   const claude = useAsync(() => api.claudeStatus(), []);
   const az = useAsync(() => api.azStatus(), []);
   const needsToken = !!claude.data?.required && claude.data.source === "own" && !claude.data.hasToken;
   const disabled = scope === null || busy || needsToken;
   const suggestions = prId !== null ? PR_SUGGESTIONS : scope?.repository ? REPO_SUGGESTIONS : PROJECT_SUGGESTIONS;
-  const target = prId !== null ? `PR #${prId}` : scope?.repository ? `repository ${scope.repository}` : scope ? `project ${scope.project}` : null;
+  const target = prId !== null ? `PR #${prId}` : scope?.repository ? scope.repository : scope ? scope.project : null;
+  const firstName = (userName || "there").split(/[ .@]/)[0];
 
   async function send(question: string, addUserMessage = true) {
     const q = question.trim();
@@ -64,6 +144,7 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
     setLastQuestion(q);
     if (addUserMessage) setMessages((m) => [...m, { role: "user", text: q }]);
     setInput("");
+    setStartedAt(Date.now());
     setBusy(true);
     try {
       const res = await api.ask(scope, prId, q);
@@ -78,76 +159,116 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
     }
   }
 
+  const empty = messages.length === 0 && !busy;
+
   return (
-    <Card title={target ? `Ask Claude · ${target}` : "Ask Claude"}>
-      <div className="flex h-[70vh] min-h-[420px] flex-col lg:h-[calc(100vh-215px)]">
-        {claude.data?.required && (
-          <div className="mb-3">
-            <ClaudeAccount status={claude.data} onChanged={claude.reload} />
-          </div>
+    <div className="flex h-[calc(100vh-190px)] min-h-[520px] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-white shadow-sm">
+      {/* thin toolbar: who Claude works as, and a new-chat button */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950/60 px-4 py-2">
+        <CopilotBadge size={22} />
+        <span className="text-sm font-semibold text-slate-200">{target ? `Ask Claude · ${target}` : "Ask Claude"}</span>
+        {messages.length > 0 && (
+          <button
+            onClick={() => { setMessages([]); setError(null); }}
+            className="ml-auto rounded-full border border-slate-700 px-3 py-1 text-xs font-medium text-slate-300 hover:bg-white"
+          >
+            + New chat
+          </button>
         )}
-        {az.data?.enabled && (
-          <div className="mb-3">
-            <AzAccount status={az.data} onChanged={az.reload} />
-          </div>
-        )}
-        <div className="flex-1 space-y-3 overflow-y-auto pr-1" aria-live="polite">
-          {messages.length === 0 && !busy && (
-            <p className="text-sm text-slate-500">
-              {scope === null
-                ? "Select an organization and project to start asking questions."
-                : `Ask anything about ${target}. Claude reads the latest code, pull requests, work items (tasks, bugs), images and attachments from your Azure DevOps.`}
-            </p>
-          )}
-          {messages.map((m, i) =>
-            m.role === "user" ? (
-              <div key={i} className="ml-8 rounded-lg bg-sky-900/50 px-3 py-2 text-sm text-sky-50">{m.text}</div>
-            ) : (
-              <div key={i} className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3">
-                <div className="prose prose-sm max-w-none prose-pre:bg-slate-950 prose-headings:mt-4 prose-headings:mb-2">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+      </div>
+      {(claude.data?.required || az.data?.enabled) && (
+        <div className="flex flex-wrap items-start gap-2 border-b border-slate-800 px-4 py-2">
+          {claude.data?.required && <div className="min-w-0 flex-1 basis-80"><ClaudeAccount status={claude.data} onChanged={claude.reload} /></div>}
+          {az.data?.enabled && <div className="min-w-0 flex-1 basis-80"><AzAccount status={az.data} onChanged={az.reload} /></div>}
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto" aria-live="polite">
+        <div className="mx-auto w-full max-w-3xl px-4 py-6">
+          {empty && (
+            <div className="pt-6 text-center sm:pt-12">
+              <div className="mx-auto mb-4 flex justify-center"><CopilotBadge size={56} /></div>
+              <h2 className="bg-linear-to-r from-[#2b88d8] via-[#7160e8] to-[#d46ef0] bg-clip-text text-3xl font-semibold text-transparent">
+                Hello, {firstName}
+              </h2>
+              <p className="mt-2 text-base text-slate-500">
+                {scope === null
+                  ? "Select an organization and project on the left to start."
+                  : "How can I help with your Azure DevOps today?"}
+              </p>
+              {scope !== null && (
+                <div className="mt-8 grid gap-3 text-left sm:grid-cols-2">
+                  {suggestions.map((s) => (
+                    <button
+                      key={s.title}
+                      disabled={disabled}
+                      onClick={() => send(s.text)}
+                      className="group h-full rounded-xl border border-slate-800 bg-white p-4 text-left shadow-sm transition hover:border-[#7160e8] hover:shadow-md disabled:opacity-40"
+                    >
+                      <span className="text-xl" aria-hidden>{s.icon}</span>
+                      <p className="mt-2 text-sm font-semibold text-slate-100">{s.title}</p>
+                      <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{s.text}</p>
+                    </button>
+                  ))}
                 </div>
-                {m.note && <p className="mt-2 text-xs text-amber-400">{m.note}</p>}
-              </div>
-            ),
-          )}
-          {busy && (
-            <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3">
-              <Spinner label="Claude is looking things up in Azure DevOps… this can take a minute or two." />
+              )}
+              {needsToken && <p className="mt-6 text-sm text-amber-400">Connect your Claude account (top right) to start.</p>}
             </div>
           )}
-          {error && <ErrorState message={error} onRetry={lastQuestion ? () => send(lastQuestion, false) : undefined} />}
-          {error && /limit/i.test(error) && claude.data?.required && (
-            <p className="text-xs text-amber-400">Usage limit reached. Use the <strong>Claude account</strong> switch above to pick another account, then retry.</p>
-          )}
-          <div ref={bottom} />
-        </div>
 
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {suggestions.map((s) => (
-            <button
-              key={s}
-              disabled={disabled}
-              onClick={() => send(s)}
-              className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:border-sky-500 hover:text-sky-300 disabled:opacity-40"
-            >
-              {s}
-            </button>
-          ))}
+          <div className="space-y-6">
+            {messages.map((m, i) =>
+              m.role === "user" ? (
+                <div key={i} className="flex justify-end">
+                  <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-sky-900 px-4 py-2.5 text-sm text-slate-100">
+                    {m.text}
+                  </div>
+                </div>
+              ) : (
+                <div key={i} className="flex gap-3">
+                  <CopilotBadge />
+                  <div className="min-w-0 flex-1">
+                    <div className="prose prose-sm max-w-none text-slate-200 prose-headings:mb-2 prose-headings:mt-5 prose-headings:font-semibold prose-p:leading-relaxed prose-pre:rounded-lg prose-pre:bg-slate-950 prose-pre:text-slate-200 prose-code:before:content-none prose-code:after:content-none prose-table:text-xs">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                    </div>
+                    {m.note && <p className="mt-2 text-xs text-amber-400">{m.note}</p>}
+                    <div className="mt-2 flex items-center gap-1 border-t border-slate-800 pt-1.5">
+                      <CopyButton text={m.text} />
+                      <span className="ml-auto text-[11px] text-slate-600">AI-generated. Check important findings before acting.</span>
+                    </div>
+                  </div>
+                </div>
+              ),
+            )}
+            {busy && <Thinking startedAt={startedAt} />}
+            {error && (
+              <div className="space-y-2">
+                <ErrorState message={error} onRetry={lastQuestion ? () => send(lastQuestion, false) : undefined} />
+                {/limit/i.test(error) && claude.data?.required && (
+                  <p className="text-xs text-amber-400">Usage limit reached. Use the <strong>Claude account</strong> switch above to pick another account, then retry.</p>
+                )}
+              </div>
+            )}
+            <div ref={bottom} />
+          </div>
         </div>
+      </div>
 
+      {/* composer */}
+      <div className="border-t border-slate-800 bg-white px-4 pb-3 pt-3">
         <form
-          className="mt-3 flex items-end gap-2"
+          className="mx-auto w-full max-w-3xl"
           onSubmit={(e) => {
             e.preventDefault();
             void send(input);
           }}
         >
-          <div className="flex-1">
+          <div className="flex items-end gap-2 rounded-2xl border border-slate-700 bg-white px-3 py-2 shadow-sm transition focus-within:border-[#7160e8] focus-within:shadow-md">
             <textarea
+              ref={box}
               value={input}
               maxLength={MAX_LEN}
-              rows={2}
+              rows={1}
               disabled={disabled}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -156,20 +277,25 @@ export function ChatPanel({ prId, scope }: { prId: number | null; scope: AskScop
                   void send(input);
                 }
               }}
-              placeholder={needsToken ? "Connect your Claude account first" : scope === null ? "Select a project first" : `Ask about ${target}…`}
-              className="w-full resize-none rounded border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-50"
+              placeholder={needsToken ? "Connect your Claude account first" : scope === null ? "Select a project first" : `Message Claude about ${target}…`}
+              className="max-h-[150px] min-h-[28px] flex-1 resize-none bg-transparent py-1 text-sm text-slate-100 outline-none placeholder:text-slate-500 disabled:opacity-50"
             />
-            <p className="text-right text-[10px] text-slate-600">{input.length}/{MAX_LEN}</p>
+            <button
+              type="submit"
+              disabled={disabled || !input.trim()}
+              aria-label="Send"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-white transition hover:bg-sky-500 disabled:bg-slate-700 disabled:opacity-60"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 19V5M5 12l7-7 7 7" />
+              </svg>
+            </button>
           </div>
-          <button
-            type="submit"
-            disabled={disabled || !input.trim()}
-            className="mb-5 rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-40"
-          >
-            Send
-          </button>
+          <p className="mt-1.5 text-center text-[11px] text-slate-600">
+            Enter to send · Shift+Enter for a new line{input.length > MAX_LEN * 0.8 ? ` · ${input.length}/${MAX_LEN}` : ""}
+          </p>
         </form>
       </div>
-    </Card>
+    </div>
   );
 }

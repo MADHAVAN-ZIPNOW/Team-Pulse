@@ -91,6 +91,7 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
           {/* Chat stays mounted so the conversation survives switching tabs. */}
           <div hidden={view !== "chat" && !!ref && prId !== null}>
             <ChatPanel
+              userName={user.name}
               prId={prId}
               scope={org && project ? { organization: org, project, repository: repoName || undefined } : null}
             />
