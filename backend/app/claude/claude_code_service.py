@@ -68,7 +68,16 @@ Return your final answer in Markdown with these sections:
 ## Questions for the Author
 
 Always end with a "Risk level" line (High / Medium / Low) and a verdict: Safe to merge / Merge after fixes / Do not merge.
-If the PR text you were given is cut off, read the rest with mcp__azure__get_pr_file_diff.
+The PR text you were given is only a PARTIAL preview (some files are cut or missing). For any review, risk, safety or
+comparison question you MUST read the WHOLE PR before answering:
+1. Call mcp__azure__get_pull_request for this PR (branch, all changed files, images/attachments, linked work items).
+2. Open every PR image/attachment with mcp__azure__get_pr_attachment and read the linked work items (mcp__azure__get_work_item).
+3. Call mcp__azure__get_pr_file_diff with paths="NEXT" (5-6 calls in parallel per turn) until its COVERAGE line says
+   ALL FILES READ. Do not skip any file, even ones that look unrelated: they would be merged. Re-read the files listed
+   as "needs a closer look".
+4. Compare the important files with the PR's source branch (mcp__azure__get_file).
+Start the answer with "Reviewing <source> -> <target>" and end with "read X of Y files, N images/attachments, M work
+items" (X must equal Y). Only skip this if the user explicitly asks for a quick check.
 If the reviewer's question is NOT a request to review the PR (for example it asks about a task, an image,
 other code or another pull request), answer that question directly instead and skip the section template.
 
