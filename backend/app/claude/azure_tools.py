@@ -329,7 +329,12 @@ def build_tools(
                 return _text("Give paths=NEXT or at least one path.", True)
             if state is not None:
                 state["claimed"].update(wanted)
-        changes = await get_pr_changes(client, organization, project, repo, pr_id, max_files=8, only_paths=set(wanted))
+        try:
+            changes = await get_pr_changes(client, organization, project, repo, pr_id, max_files=8, only_paths=set(wanted))
+        except Exception:
+            if state is not None:
+                state["claimed"].difference_update(wanted)  # a failed batch must be offered again, not counted as read
+            raise
         if not changes.files:
             return _text("None of those paths are in this PR. Use paths=NEXT, or the exact paths from get_pull_request.", True)
         per_file = min(20_000, 80_000 // len(changes.files))  # fewer files per call = more of each file
