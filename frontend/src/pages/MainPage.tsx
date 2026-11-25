@@ -1,18 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, type PrRef, type User } from "../lib/api";
-import { useAsync } from "../hooks/useAsync";
-import { Card, Selector } from "../components/common";
+import { useEffect, useState } from "react";
+import { DEFAULT_ORG, type AskScope, type User } from "../lib/api";
 import { Header } from "../components/Header";
-import { PullRequestList } from "../components/PullRequestList";
-import { PR_TABS, PrPanel, type PrTab } from "../components/PrPanel";
 import { ChatPanel } from "../components/ChatPanel";
 
 export function MainPage({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const [org, setOrg] = useState("");
-  const [project, setProject] = useState("");
-  const [repoName, setRepoName] = useState("");
-  const [prId, setPrId] = useState<number | null>(null);
-  const [view, setView] = useState<"chat" | PrTab>("chat");
+  const [view, setView] = useState<"chat">("chat");
   const [welcome, setWelcome] = useState(() => {
     try {
       const fresh = sessionStorage.getItem("justSignedIn") === "1";
@@ -29,15 +21,7 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
     return () => clearTimeout(t);
   }, [welcome]);
 
-  const orgs = useAsync(() => api.organizations(), []);
-  const projects = useAsync(() => api.projects(org), [org], !!org);
-  const repos = useAsync(() => api.repositories(org, project), [org, project], !!org && !!project);
-  const ref: PrRef | null = org && project && repoName ? { organization: org, project, repository: repoName } : null;
-  const prs = useAsync(() => api.pullRequests(ref!), [org, project, repoName], !!ref);
-
-  const orgOptions = useMemo(() => (orgs.data ?? []).map((o) => ({ value: o.name, label: o.name })), [orgs.data]);
-  const projectOptions = useMemo(() => (projects.data ?? []).map((p) => ({ value: p.name, label: p.name })), [projects.data]);
-  const repoOptions = useMemo(() => (repos.data ?? []).map((r) => ({ value: r.name, label: r.name })), [repos.data]);
+  const scope: AskScope = { organization: DEFAULT_ORG };
 
   return (
     <div className="flex min-h-screen flex-col lg:h-screen lg:overflow-hidden">
@@ -48,39 +32,10 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
           <button onClick={() => setWelcome(false)} className="text-xs underline">Dismiss</button>
         </div>
       )}
-      <main className="mx-auto grid min-h-0 w-full max-w-[1800px] flex-1 gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="min-h-0 space-y-4 lg:overflow-y-auto">
-          <Card title="Source">
-            <div className="space-y-3">
-              <Selector
-                label="Organization" value={org} options={orgOptions} loading={orgs.loading}
-                error={orgs.error} onRetry={orgs.reload}
-                onChange={(v) => { setOrg(v); setProject(""); setRepoName(""); setPrId(null); }}
-                placeholder={orgs.data?.length === 0 ? "No organizations found" : undefined}
-              />
-              <Selector
-                label="Project" value={project} options={projectOptions} loading={projects.loading} disabled={!org}
-                error={projects.error} onRetry={projects.reload}
-                onChange={(v) => { setProject(v); setRepoName(""); setPrId(null); }}
-              />
-              <Selector
-                label="Repository" value={repoName} options={repoOptions} loading={repos.loading} disabled={!project}
-                error={repos.error} onRetry={repos.reload}
-                onChange={(v) => { setRepoName(v); setPrId(null); }}
-              />
-            </div>
-          </Card>
-          <Card title="Active pull requests">
-            <PullRequestList
-              prs={prs.data} loading={prs.loading} error={prs.error} onRetry={prs.reload}
-              selectedId={prId} onSelect={(id) => { setPrId(id); }}
-            />
-          </Card>
-        </aside>
-
+      <main className="mx-auto grid min-h-0 w-full max-w-[1800px] flex-1 gap-4 p-4 ">
         <section className="flex min-h-0 min-w-0 flex-col gap-3">
           <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-800" role="tablist">
-            {[{ id: "chat" as const, label: "Chat" }, ...(ref && prId !== null ? PR_TABS : [])].map((t) => (
+            {[{ id: "chat" as const, label: "Chat" }].map((t) => (
               <button
                 key={t.id}
                 role="tab"
@@ -95,14 +50,13 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
             ))}
           </nav>
           {/* Chat stays mounted so the conversation survives switching tabs. */}
-          <div className="min-h-0 flex-1" hidden={view !== "chat" && !!ref && prId !== null}>
+          <div className="min-h-0 flex-1" >
             <ChatPanel
               userName={user.name}
-              prId={prId}
-              scope={org && project ? { organization: org, project, repository: repoName || undefined } : null}
+              prId={null}
+              scope={scope}
             />
           </div>
-          {ref && prId !== null && view !== "chat" && <div className="min-h-0 flex-1 overflow-y-auto"><PrPanel prId={prId} repo={ref} tab={view} /></div>}
         </section>
       </main>
     </div>

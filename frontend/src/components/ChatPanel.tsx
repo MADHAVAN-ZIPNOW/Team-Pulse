@@ -180,7 +180,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
   const needsToken = !!claude.data?.required && claude.data.source === "own" && !claude.data.hasToken;
   const disabled = scope === null || busy || needsToken;
   const suggestions = prId !== null ? PR_SUGGESTIONS : scope?.repository ? REPO_SUGGESTIONS : PROJECT_SUGGESTIONS;
-  const target = prId !== null ? `PR #${prId}` : scope?.repository ? scope.repository : scope ? scope.project : null;
+  const target = prId !== null ? `PR #${prId}` : scope?.repository ? scope.repository : scope ? (scope.project ?? scope.organization) : null;
   const firstName = (userName || "there").split(/[ .@]/)[0];
 
   async function send(question: string, addUserMessage = true) {
@@ -257,7 +257,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
               </h2>
               <p className="mt-2 text-base text-slate-500">
                 {scope === null
-                  ? "Select an organization and project on the left to start."
+                  ? "Connecting…"
                   : "How can I help with your Azure DevOps today?"}
               </p>
               {scope !== null && (
@@ -342,7 +342,7 @@ export function ChatPanel({ prId, scope, userName }: { prId: number | null; scop
                   void send(input);
                 }
               }}
-              placeholder={needsToken ? "Connect your Claude account first" : scope === null ? "Select a project first" : `Message Claude about ${target}…`}
+              placeholder={needsToken ? "Connect your Claude account first" : `Message Claude about ${target}…`}
               className="no-ring max-h-[150px] min-h-[28px] flex-1 resize-none bg-transparent py-1 text-sm text-slate-100 outline-none placeholder:text-slate-500 disabled:opacity-50"
             />
             {mic.supported && (

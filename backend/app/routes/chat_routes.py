@@ -28,7 +28,7 @@ def scope_description(body: AskRequest) -> str:
     lines = [
         "<azure_devops_scope>",
         f"Organization: {body.organization}",
-        f"Project: {body.project}",
+        f"Project: {body.project or '(none selected - use list_projects, or ask the user)'}",
         f"Repository: {body.repository or '(none selected - use list_repositories)'}",
         "Your mcp__azure__* tools default to this project/repository. 'Latest code' means the head of a branch.",
         "</azure_devops_scope>",
@@ -59,12 +59,12 @@ async def ask(
     claude_token = effective_claude_token(session, settings)
     if settings.require_user_claude_token and not claude_token:
         raise HTTPException(status_code=400, detail="Connect your own Claude account first (paste your Claude token above the chat).")
-    org, project, repo, pr_id = body.organization, body.project, body.repository, body.pull_request_id
+    org, project, repo, pr_id = body.organization, body.project or "", body.repository, body.pull_request_id
     context_text = scope_description(body)
     files_analyzed = files_total = 0
     truncated = False
 
-    if pr_id is not None and repo:
+    if pr_id is not None and repo and project:
         raw_pr, iterations, commits_raw, threads_raw = await asyncio.gather(
             client.get_pull_request(org, project, repo, pr_id),
             client.list_iterations(org, project, repo, pr_id),

@@ -39,7 +39,8 @@ export interface ClaudeStatus { required: boolean; hasToken: boolean; source: st
 export interface AzStatus { enabled: boolean; policy: string; policyText: string; signedIn: boolean; user?: string | null; managedByLogin?: boolean }
 export interface ClaudeModel { id: string; label: string; note: string }
 export interface ClaudeModels { models: ClaudeModel[]; default: string }
-export interface AskScope { organization: string; project: string; repository?: string }
+export const DEFAULT_ORG: string = (import.meta.env.VITE_AZURE_ORG as string | undefined) || "dtek";
+export interface AskScope { organization: string; project?: string; repository?: string }
 export interface PrRef { organization: string; project: string; repository: string }
 
 let unauthorizedHandler: (() => void) | null = null;

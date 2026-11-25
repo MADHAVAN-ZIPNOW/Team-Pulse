@@ -134,7 +134,10 @@ def build_tools(
     pr_reads: dict[int, dict[str, Any]] = {}  # per PR: which changed files Claude has read so far
 
     def project_of(args: dict[str, Any]) -> str:
-        return (args.get("project") or default_project).strip()
+        project = (args.get("project") or default_project or "").strip()
+        if not project:
+            raise AzureDevOpsError("No project selected. Pass the 'project' argument (see list_projects).", 400)
+        return project
 
     def repo_of(args: dict[str, Any]) -> str:
         repo = (args.get("repository") or default_repository or "").strip()
@@ -158,6 +161,12 @@ def build_tools(
     PROJ = ("string", "Project name (defaults to the selected project)")
     REPO = ("string", "Repository name (defaults to the selected repository)")
     BRANCH = ("string", "Branch name without refs/heads/ (defaults to the repository's default branch)")
+
+    @tool("list_projects", "List all projects in the Azure DevOps organization.", _schema({}))
+    @guarded
+    async def list_projects(args: dict[str, Any]) -> dict[str, Any]:
+        projects = await client.list_projects(organization)
+        return _text(chr(10).join(p.get("name", "") for p in projects) or "No projects found.")
 
     @tool("list_repositories", "List the Git repositories in a project.", _schema({"project": PROJ}))
     @guarded
@@ -514,7 +523,7 @@ def build_tools(
         return _text(f"{name} ({doc[0]}):" + chr(10) + doc[1], limit=80_000)
 
     tools = [
-        list_repositories, list_branches, list_files, get_file, list_pull_requests,
+        list_projects, list_repositories, list_branches, list_files, get_file, list_pull_requests,
         get_pull_request, get_pr_file_diff, get_pr_attachment, search_work_items, get_work_item, get_attachment,
     ]
     return tools

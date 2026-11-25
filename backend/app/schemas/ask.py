@@ -16,7 +16,7 @@ class AskRequest(CamelModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True, alias_generator=to_camel)
 
     organization: OrgStr
-    project: NameStr
+    project: NameStr | None = None
     repository: NameStr | None = None
     pull_request_id: int | None = Field(default=None, ge=1, le=2_147_483_647)
     question: QuestionStr
