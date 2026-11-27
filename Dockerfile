@@ -26,6 +26,8 @@ ENV HF_HOME=/home/app/data/hf
 COPY backend/app ./app
 COPY --from=web /web/dist /app/static
 ENV STATIC_DIR=/app/static HOME=/home/app
+# Where the app keeps its files (sign-ins, meetings, radar reports). On Render a disk can be mounted at /home/app/data to keep them.
+ENV SESSION_DIR=/home/app/data/sessions MEETING_DIR=/home/app/data/meetings RADAR_DIR=/home/app/data/radar
 # The app runs as the non-root user "app" (Claude Code keeps its config under $HOME). The container STARTS as root only to hand the data
 # folder to that user (a Render disk is mounted owned by root), then drops to "app" for good.
 RUN useradd -m app && mkdir -p /home/app/data && chown -R app:app /app /home/app

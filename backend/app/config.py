@@ -172,6 +172,17 @@ def _dir(name: str, default: str) -> str:
     return fixed or default
 
 
+def _usable(path: str, name: str) -> str:
+    """A folder that cannot be created (for example /data on a hosted server) must never stop the app: use a temporary one instead."""
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return path
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "pra-data" / name
+        fallback.mkdir(parents=True, exist_ok=True)
+        return str(fallback)
+
+
 def _hours(raw: str) -> tuple[int, int, int]:
     """"8,14,20" -> the morning, afternoon and night hours (must rise through the day)."""
     try:
@@ -196,7 +207,7 @@ def get_settings() -> Settings:
         redirect_uri=os.getenv("AZURE_REDIRECT_URI", "http://localhost:8000/auth/callback").strip(),
         frontend_url=os.getenv("FRONTEND_URL", "http://localhost:5173").strip().rstrip("/"),
         session_secret=secret,
-        session_dir=_dir("SESSION_DIR", str(Path(tempfile.gettempdir()) / "pra-sessions")),
+        session_dir=_usable(_dir("SESSION_DIR", str(Path(tempfile.gettempdir()) / "pra-sessions")), "sessions"),
         trends_enabled=_bool("TRENDS_ENABLED", True),
         radar_enabled=_bool("RADAR_ENABLED", True),
         radar_model=os.getenv("RADAR_MODEL", "sonnet").strip() or "sonnet",
@@ -205,7 +216,7 @@ def get_settings() -> Settings:
         radar_mail_to=tuple(a.strip() for a in os.getenv("RADAR_MAIL_TO", "").split(",") if re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+", a.strip())),
         radar_page_url=os.getenv("RADAR_PAGE_URL", "").strip(),
         radar_tz=os.getenv("RADAR_TZ", "Asia/Kolkata").strip() or "Asia/Kolkata",
-        radar_dir=_dir("RADAR_DIR", str(PROJECT_ROOT / "data" / "radar")),
+        radar_dir=_usable(_dir("RADAR_DIR", str(PROJECT_ROOT / "data" / "radar")), "radar"),
         radar_watchlist=os.getenv("RADAR_WATCHLIST", "").strip() or Settings.radar_watchlist,
         radar_domains=os.getenv("RADAR_DOMAINS", "").strip(),
         radar_languages=os.getenv("RADAR_LANGUAGES", "").strip() or Settings.radar_languages,
@@ -217,7 +228,7 @@ def get_settings() -> Settings:
         trends_research_model=os.getenv("TRENDS_RESEARCH_MODEL", "sonnet").strip() or "sonnet",
         meeting_agent_enabled=_bool("MEETING_AGENT_ENABLED", False),
         meeting_agent_model=os.getenv("MEETING_AGENT_MODEL", "sonnet").strip() or "sonnet",
-        meeting_dir=_dir("MEETING_DIR", str(PROJECT_ROOT / "data" / "meetings")),
+        meeting_dir=_usable(_dir("MEETING_DIR", str(PROJECT_ROOT / "data" / "meetings")), "meetings"),
         meeting_retention_days=max(1, int(os.getenv("MEETING_RETENTION_DAYS", "90") or 90)),
         azure_speech_key=os.getenv("AZURE_SPEECH_KEY", "").strip(),
         azure_speech_region=re.sub(r"[^a-z0-9-]", "", os.getenv("AZURE_SPEECH_REGION", "").strip().lower()),
