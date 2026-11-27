@@ -39,6 +39,8 @@ def _frontend_redirect(settings: Settings, **params: str) -> RedirectResponse:
 async def login(
     auth: Annotated[MicrosoftAuth, Depends(get_auth)], settings: Annotated[Settings, Depends(get_settings)]
 ) -> Response:
+    if settings.auth_mode != "msal":  # this server signs people in another way: explain instead of crashing
+        return _frontend_redirect(settings, auth_error="This server uses the code sign-in. Press “Sign in with code” instead.")
     try:
         auth_uri, state = auth.start_login()
     except AuthError as exc:

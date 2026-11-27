@@ -389,6 +389,24 @@ class ClaudeCodeService:
                 if config_dir:
                     shutil.rmtree(config_dir, ignore_errors=True)
 
+    async def run_custom(
+        self, prompt: str, options: ClaudeAgentOptions, timeout: int = MAX_RUNTIME_SECONDS, sem: asyncio.Semaphore | None = None
+    ) -> str:
+        """Run Claude with caller-built options (used by background jobs such as Google Trends)."""
+        async with sem or self._sem:
+            try:
+                return await asyncio.wait_for(self._run(prompt, options), timeout=timeout)
+            except asyncio.TimeoutError as exc:
+                raise ClaudeCodeError("Claude Code took too long to answer.") from exc
+            except ClaudeCodeError:
+                raise
+            except ClaudeSDKError as exc:
+                logger.error("Claude SDK error: %s: %s", type(exc).__name__, exc)
+                raise ClaudeCodeError("Claude Code could not run. Is the Claude Code CLI installed and signed in?") from exc
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Unexpected Claude Code failure")
+                raise ClaudeCodeError("Claude Code failed unexpectedly. Check the backend logs.") from exc
+
     async def _run(self, prompt: str, options: ClaudeAgentOptions) -> str:
         chunks: list[str] = []
         final: str | None = None

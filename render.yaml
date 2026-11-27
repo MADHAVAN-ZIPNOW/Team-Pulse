@@ -1,12 +1,21 @@
 # Render Blueprint: one Docker web service (React UI + FastAPI + Claude Code CLI).
 # Secrets are marked sync:false - Render asks for them in the dashboard; they are never stored in git.
+#
+# plan: free costs nothing, but a free instance sleeps after 15 idle minutes and has no disk, so:
+#   - the 3-a-day Problem Radar emails and the automatic meeting watcher only run while it is awake;
+#   - saved sign-ins, meetings and radar reports are lost whenever it restarts or is redeployed.
+# For an always-on Team Pulse where people STAY signed in, change plan to `starter` (about 7 USD a month) and add this under the service:
+#     disk:
+#       name: team-pulse-data
+#       mountPath: /home/app/data
+#       sizeGB: 1
 services:
   - type: web
     name: azure-devops-pr-assistant
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: free            # free instances sleep when idle and sign everyone out; use starter for a team
+    plan: free
     healthCheckPath: /api/health
     envVars:
       - key: SESSION_SECRET
@@ -25,3 +34,29 @@ services:
         sync: false
       - key: CLAUDE_CODE_OAUTH_TOKEN   # from `claude setup-token` (your Claude subscription)
         sync: false
+      - key: GROQ_API_KEY              # free speech-to-text for meeting recordings (a key starting with gsk_)
+        sync: false
+      - key: RADAR_MAIL_FROM           # the mailbox the Problem Radar email is sent from
+        sync: false
+      - key: RADAR_MAIL_TO             # comma-separated recipients
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: MEETING_AGENT_ENABLED
+        value: "true"
+      - key: WHISPER_MODEL             # "off": the speech-to-text runs on Groq, not on this small server
+        value: "off"
+      - key: RADAR_MODEL
+        value: haiku
+      - key: RADAR_HOURS
+        value: "8,14,20"
+      - key: RADAR_TZ
+        value: Asia/Kolkata
+      - key: CLAUDE_CODE_STREAM_CLOSE_TIMEOUT
+        value: "300000"
+      - key: SESSION_DIR
+        value: /home/app/data/sessions
+      - key: MEETING_DIR
+        value: /home/app/data/meetings
+      - key: RADAR_DIR
+        value: /home/app/data/radar

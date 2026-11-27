@@ -92,7 +92,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 /** Microsoft four-square logo whose squares light up one after another while Claude works. */
-function MsLoader({ size = 26 }: { size?: number }) {
+export function MsLoader({ size = 26 }: { size?: number }) {
   const colours = ["#f25022", "#7fba00", "#ffb900", "#00a4ef"]; // clockwise from top-left
   const place = ["top-0 left-0", "top-0 right-0", "bottom-0 right-0", "bottom-0 left-0"];
   return (

@@ -621,6 +621,40 @@ def test_signed_in_session_survives_a_restart_until_logout(tmp_path):
     assert SessionStore(3600, folder, "secret-1").get(s.id) is None and not az_dir.exists()
 
 
+def test_microsoft_sign_in_survives_a_restart_until_logout(tmp_path):
+    from types import SimpleNamespace
+
+    from app.services.session_store import UserProfile
+
+    class Cache:
+        def __init__(self) -> None:
+            self.data = ""
+
+        def serialize(self) -> str:
+            return self.data
+
+        def deserialize(self, text: str) -> None:
+            self.data = text
+
+    def make_app() -> SimpleNamespace:
+        return SimpleNamespace(token_cache=Cache())
+
+    folder = str(tmp_path / "saved")
+    store = SessionStore(3600, folder, "secret-1", make_app)
+    app = make_app()
+    app.token_cache.data = "REFRESH-TOKEN-123"
+    account = {"home_account_id": "h1", "username": "a@example.com"}
+    s = store.create(app, account, UserProfile(name="A", email="a@example.com", tenant_id="t", object_id="o"))
+    assert "REFRESH-TOKEN" not in b"".join(p.read_bytes() for p in (tmp_path / "saved").glob("*.sess")).decode(errors="ignore")  # encrypted
+
+    back = SessionStore(3600, folder, "secret-1", make_app).get(s.id)  # the server restarted (or a new deployment)
+    assert back and back.msal_app.token_cache.data == "REFRESH-TOKEN-123" and back.account == account
+    assert SessionStore(3600, folder, "secret-1", None).get(s.id) is None  # nothing to rebuild it with: asks to sign in again
+
+    store.delete(s.id)  # log out
+    assert SessionStore(3600, folder, "secret-1", make_app).get(s.id) is None
+
+
 def test_late_duplicate_az_status_after_success_says_signed_in_not_expired(monkeypatch):
     app, azure_cli, started = _az_login_app(monkeypatch)
 

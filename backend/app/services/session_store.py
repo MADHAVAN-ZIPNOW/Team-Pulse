@@ -1,8 +1,8 @@
 """Server-side session storage. Tokens never go to the browser.
 
-Sessions live in memory and, for the sign-in modes that can be saved (az_login / azure_cli), are also written
-encrypted to SESSION_DIR so a restart does not sign people out again. A session lasts until log out, or until it
-has been idle for the whole TTL (30 days by default)."""
+Sessions live in memory and are also written encrypted to SESSION_DIR (Microsoft sign-in included, with its token
+cache) so a restart or a new deployment does not sign people out again. A session lasts until log out, or until it
+has been idle for the whole TTL (a year by default; Microsoft itself asks for a new sign-in after 90 days of not using the app)."""
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +16,7 @@ import shutil
 import time
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -60,8 +60,9 @@ def cleanup_az(session: "Session") -> None:
 
 
 class SessionStore:
-    def __init__(self, ttl_seconds: int, directory: str | None = None, secret: str = "") -> None:
+    def __init__(self, ttl_seconds: int, directory: str | None = None, secret: str = "", msal_factory: Callable[[], Any] | None = None) -> None:
         self._ttl = ttl_seconds
+        self._msal_factory = msal_factory  # builds an empty MSAL app, to bring a saved Microsoft sign-in back after a restart
         self._sessions: dict[str, Session] = {}
         self._dir = Path(directory) if directory else None
         self._fernet = Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())) if secret else None
@@ -80,15 +81,24 @@ class SessionStore:
         return self._dir / f"{session_id}.sess"
 
     def save(self, session: Session) -> None:
-        """Write this session to disk (encrypted). Sessions that hold an MSAL cache are memory-only."""
+        """Write this session to disk (encrypted with SESSION_SECRET). A Microsoft sign-in is saved with its token cache (the refresh
+        token), so a restart or a new deployment does not sign anybody out: they stay signed in until they log out."""
         path = self._file(session.id)
-        if path is None or session.msal_app is not None or self._fernet is None:
+        if path is None or self._fernet is None:
             return
         data = {
             "id": session.id, "user": session.user.__dict__, "claude_token": session.claude_token,
             "az_dir": session.az_dir, "az_user": session.az_user, "claude_source": session.claude_source,
             "created_at": session.created_at, "last_seen": session.last_seen,
         }
+        if session.msal_app is not None:
+            cache = getattr(session.msal_app, "token_cache", None)
+            if cache is None or self._msal_factory is None:
+                return  # cannot bring it back later: keep it in memory only
+            try:
+                data["msal_cache"], data["account"] = cache.serialize(), session.account
+            except Exception:  # noqa: BLE001 - never let saving break a request
+                return
         try:
             tmp = path.with_suffix(".tmp")
             tmp.write_bytes(self._fernet.encrypt(json.dumps(data).encode()))
@@ -107,7 +117,13 @@ class SessionStore:
                     raise ValueError("expired")
                 if d.get("az_dir") and not Path(d["az_dir"]).is_dir():
                     raise ValueError("az folder is gone")
-                s = Session(id=d["id"], msal_app=None, account={}, user=UserProfile(**d["user"]),
+                app: Any = None
+                if d.get("msal_cache"):
+                    if self._msal_factory is None:
+                        raise ValueError("cannot restore a Microsoft sign-in")
+                    app = self._msal_factory()
+                    app.token_cache.deserialize(d["msal_cache"])
+                s = Session(id=d["id"], msal_app=app, account=d.get("account") or {}, user=UserProfile(**d["user"]),
                             claude_token=d.get("claude_token"), az_dir=d.get("az_dir"), az_user=d.get("az_user"),
                             claude_source=d.get("claude_source") or "own", created_at=float(d["created_at"]),
                             last_seen=float(d["last_seen"]))
@@ -142,6 +158,11 @@ class SessionStore:
         if now - session.saved_at > 3600:
             self.save(session)
         return session
+
+    def active(self) -> list[Session]:
+        """Sessions that have not expired. Looking at them does NOT count as the person being active."""
+        now = time.time()
+        return [s for s in self._sessions.values() if now - s.last_seen <= self._ttl]
 
     def delete(self, session_id: str) -> None:
         session = self._sessions.pop(session_id, None)

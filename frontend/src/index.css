@@ -74,3 +74,16 @@ code, pre, .font-mono { font-family: "Cascadia Code", "Cascadia Mono", Consolas,
 @keyframes micPulse { 0% { box-shadow: 0 0 0 0 rgba(209, 52, 56, .45); } 100% { box-shadow: 0 0 0 10px rgba(209, 52, 56, 0); } }
 .mic-live { animation: micPulse 1.2s ease-out infinite; }
 @media (prefers-reduced-motion: reduce) { .mic-live { animation: none; } }
+
+/* Trends page: show optional blocks only when the window is tall enough, so nothing ever needs scrolling */
+.show-640, .show-720, .show-800 { display: none; }
+@media (min-height: 640px) { .show-640 { display: block; } }
+@media (min-height: 720px) { .show-720 { display: block; } }
+@media (min-height: 800px) { .show-800 { display: block; } }
+
+/* Trend chat: shimmering "what Claude is doing" text and a blinking cursor while the answer streams in */
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.shimmer { background: linear-gradient(90deg, #323130 0%, #323130 35%, #0078d4 50%, #323130 65%, #323130 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 2.4s linear infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.caret::after { content: "▍"; color: #0078d4; margin-left: 2px; animation: blink 1s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) { .shimmer { animation: none; color: #323130; background: none; } .caret::after { animation: none; } }

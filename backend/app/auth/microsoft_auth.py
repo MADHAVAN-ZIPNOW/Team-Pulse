@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import msal
@@ -14,6 +15,14 @@ logger = logging.getLogger("pr_assistant.auth")
 
 # openid/profile/offline_access are added by MSAL automatically; only list the resource scope.
 SCOPES = [AZURE_DEVOPS_SCOPE]
+# Teams meetings (Microsoft Graph). These are asked for later, silently, never at sign-in: they need admin consent, and asking
+# for them at sign-in would stop everyone from signing in until the admin approves.
+GRAPH_SCOPES = [
+    "https://graph.microsoft.com/Calendars.Read", "https://graph.microsoft.com/OnlineMeetings.Read",
+    "https://graph.microsoft.com/OnlineMeetingTranscript.Read.All", "https://graph.microsoft.com/OnlineMeetingRecording.Read.All",
+]
+# Writing the person's Excel file. Asked for separately from the Teams scopes above, so a missing approval here can never break the video.
+EXCEL_SCOPES = ["https://graph.microsoft.com/Files.ReadWrite"]
 
 
 class AuthError(Exception):
@@ -30,6 +39,7 @@ class MicrosoftAuth:
         self.settings = settings
         self.sessions = sessions
         self.flows = flows
+        self._graph_cache: dict[str, tuple[str, float]] = {}  # session id -> (Teams token, expires at); memory only
 
     def _build_app(self) -> Any:
         if missing := self.settings.missing_auth_config():
@@ -96,6 +106,42 @@ class MicrosoftAuth:
             logger.warning("Sign-in rejected: user is not in ALLOWED_USERS")
             raise AuthError("Your account is not allowed to use this app. Ask the owner to add you.", 403)
         return self.sessions.create(app, account, user)
+
+    async def get_graph_token(self, session: Session, scopes: list[str] | None = None) -> str:
+        """A Microsoft Graph token for this person's Teams meetings. Needs admin consent for the Teams permissions."""
+        if session.msal_app is None:
+            raise AuthError("Teams meetings need the 'Sign in with Microsoft' sign-in (not the Azure CLI code sign-in).", 400)
+        key = session.id + ("|" + ",".join(scopes) if scopes else "")
+        hit = self._graph_cache.get(key)
+        if hit and hit[1] - 120 > time.time():
+            return hit[0]
+
+        def acquire() -> dict[str, Any] | None:
+            # Work on a private copy of the sign-in cache: a failed Teams attempt can then never damage the real sign-in.
+            cache = msal.SerializableTokenCache()
+            cache.deserialize(session.msal_app.token_cache.serialize())
+            c = self.settings
+            app = msal.ConfidentialClientApplication(c.client_id, client_credential=c.client_secret, authority=c.authority, token_cache=cache)
+            home = (session.account or {}).get("home_account_id")
+            account = next((a for a in app.get_accounts() if a.get("home_account_id") == home), None) or session.account
+            return app.acquire_token_silent_with_error(scopes or GRAPH_SCOPES, account=account)  # unlike acquire_token_silent, this says WHY it failed
+
+        async with session.lock:
+            result = await asyncio.to_thread(acquire)
+        if result and "access_token" in result:
+            self._graph_cache[key] = (result["access_token"], time.time() + int(result.get("expires_in", 3000)))
+        if not result or "access_token" not in result:
+            detail = str((result or {}).get("error_description") or (result or {}).get("error") or "no Graph token in this sign-in yet")
+            logger.warning("Teams (Graph) token not available: %s", detail.replace("\n", " ")[:400])
+            code = next((w.strip(":.,") for w in detail.split() if w.startswith("AADSTS")), "")
+            c = self.settings
+            link = f"https://login.microsoftonline.com/{c.tenant_id}/adminconsent?client_id={c.client_id}" if c.tenant_id and c.client_id else ""
+            raise AuthError(
+                "Teams meetings are not connected yet: your Microsoft 365 admin has to approve the Teams permissions for Team Pulse "
+                "(Calendars.Read, OnlineMeetings.Read, OnlineMeetingTranscript.Read.All, OnlineMeetingRecording.Read.All)."
+                + (f" (Microsoft's code: {code}.)" if code else "")
+                + (f" Admin approval link: {link}" if link else ""), 403)
+        return result["access_token"]
 
     async def get_access_token(self, session: Session) -> str:
         """Returns a valid Azure DevOps access token; MSAL refreshes it from the cached refresh token."""

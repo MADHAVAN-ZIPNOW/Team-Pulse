@@ -291,6 +291,68 @@ class AzureDevOpsClient:
         data = await self._get_json(url, params)
         return data.get("value") or []
 
+    # ---- writes (used only by the meeting agent; everything above is read-only) -----------------------------
+    async def _write(self, method: str, url: str, body: Any | None = None, content_type: str = "application/json") -> httpx.Response:
+        """One attempt, never retried automatically: a retried create could make a duplicate work item."""
+        token = await self._token_provider()
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": content_type}
+        try:
+            resp = await self._http.request(
+                method, url, params={"api-version": self._api_version}, headers=headers, json=body, follow_redirects=False
+            )
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise AzureDevOpsError("Could not reach Azure DevOps (network error or timeout).", 504) from exc
+        if resp.status_code in (203, 302) or resp.status_code >= 400:
+            logger.warning("ADO %s %s -> HTTP %s", method, url.split("?")[0], resp.status_code)
+            err = _friendly_error(resp.status_code)
+            if resp.status_code in (400, 409, 422):  # Azure DevOps says what is wrong (missing field, bad value ...): useful to show
+                try:
+                    detail = str(resp.json().get("message") or "")[:240]
+                except ValueError:
+                    detail = ""
+                if detail:
+                    err = AzureDevOpsError(f"Azure DevOps refused it: {detail}", resp.status_code)
+            raise err
+        return resp
+
+    async def list_work_item_types(self, organization: str, project: str) -> list[str]:
+        """Names of the work item types of this project's process (Scrum has 'Product Backlog Item', Agile has 'User Story')."""
+        data = await self._get_json(build_url(organization, "wit", "workitemtypes", project=project))
+        return [str(t.get("name")) for t in data.get("value") or [] if t.get("name") and not t.get("isDisabled")]
+
+    async def create_work_item(
+        self, organization: str, project: str, work_item_type: str, title: str, *, description: str = "",
+        acceptance_criteria: str = "", hours: float | None = None, parent_id: int | None = None, tags: str = "",
+    ) -> dict[str, Any]:
+        """Creates one work item, optionally as a child of parent_id. Returns Azure DevOps' answer (id, fields, _links)."""
+        def html(text: str) -> str:
+            esc = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            return esc.replace("\r\n", "\n").replace("\n", "<br>")
+
+        ops: list[dict[str, Any]] = [{"op": "add", "path": "/fields/System.Title", "value": title[:255]}]
+        if description:
+            ops.append({"op": "add", "path": "/fields/System.Description", "value": html(description)})
+        if acceptance_criteria and work_item_type in ("Product Backlog Item", "User Story", "Feature"):
+            ops.append({"op": "add", "path": "/fields/Microsoft.VSTS.Common.AcceptanceCriteria", "value": html(acceptance_criteria)})
+        if hours is not None and work_item_type == "Task":
+            ops.append({"op": "add", "path": "/fields/Microsoft.VSTS.Scheduling.OriginalEstimate", "value": hours})
+            ops.append({"op": "add", "path": "/fields/Microsoft.VSTS.Scheduling.RemainingWork", "value": hours})
+        if tags:
+            ops.append({"op": "add", "path": "/fields/System.Tags", "value": tags})
+        if parent_id is not None:
+            parent_url = build_url(organization, "wit", "workItems", str(int(parent_id)))
+            ops.append({"op": "add", "path": "/relations/-", "value": {"rel": "System.LinkTypes.Hierarchy-Reverse", "url": parent_url}})
+        url = build_url(organization, "wit", "workitems", project=project) + "/$" + quote(work_item_type, safe="")
+        resp = await self._write("POST", url, ops, content_type="application/json-patch+json")
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise AzureDevOpsError("Azure DevOps returned an unreadable response.", 502) from exc
+
+    async def delete_work_item(self, organization: str, project: str, work_item_id: int) -> None:
+        """Moves the work item to the project's recycle bin (it can be restored there); it is not destroyed."""
+        await self._write("DELETE", build_url(organization, "wit", "workitems", str(int(work_item_id)), project=project))
+
     async def get_work_item(self, organization: str, work_item_id: int) -> dict[str, Any]:
         url = build_url(organization, "wit", "workitems", str(int(work_item_id)))
         return await self._get_json(url, {"$expand": "relations"})
