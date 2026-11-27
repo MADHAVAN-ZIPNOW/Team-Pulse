@@ -10,12 +10,15 @@ and query Azure DevOps (repos, latest code, PRs, work items, images) through rea
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import os
 import re
 import shlex
 import shutil
+import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -348,10 +351,25 @@ def build_user_prompt(question: str, context: str) -> str:
     return f"<user_question>\n{question}\n</user_question>\n\n{context}"
 
 
+_FEATURES = (("radar", "Problem Radar"), ("trends", "Google Trends"), ("meeting", "Meetings"))
+
+
+def _feature_name(module: str) -> str:
+    """Which app feature made this call, from the calling module's name (so new features show up on their own)."""
+    last = module.rsplit(".", 1)[-1]
+    for key, name in _FEATURES:
+        if key in last:
+            return name
+    return last.replace("_service", "").replace("_", " ").title() or "App"
+
+
 class ClaudeCodeService:
     def __init__(self, repo_path: str, concurrency: int = 2) -> None:
         self._repo_path = repo_path
         self._sem = asyncio.Semaphore(concurrency)
+        self.inflight = 0  # Claude calls running right now
+        self.model_override = None  # set by the app: feature name -> model id chosen by an admin (or None)
+        self.on_event = None  # set by the app: called once per finished Claude call
 
     async def ask(
         self,
@@ -364,6 +382,7 @@ class ClaudeCodeService:
         oauth_token: str | None = None,
         az: AzContext | None = None,
         model: str | None = None,
+        usage_sink: dict | None = None,
     ) -> str:
         root = resolve_repo(self._repo_path)
         config_dir = tempfile.mkdtemp(prefix="claude-user-") if oauth_token else None
@@ -371,7 +390,7 @@ class ClaudeCodeService:
         prompt = build_user_prompt(question, context)
         async with self._sem:
             try:
-                return await asyncio.wait_for(self._run(prompt, options), timeout=MAX_RUNTIME_SECONDS)
+                return await asyncio.wait_for(self._run(prompt, options, usage_sink, "PR Assistant"), timeout=MAX_RUNTIME_SECONDS)
             except asyncio.TimeoutError as exc:
                 raise ClaudeCodeError("Claude Code took too long to answer. Try a narrower question.") from exc
             except ClaudeCodeError:
@@ -393,9 +412,10 @@ class ClaudeCodeService:
         self, prompt: str, options: ClaudeAgentOptions, timeout: int = MAX_RUNTIME_SECONDS, sem: asyncio.Semaphore | None = None
     ) -> str:
         """Run Claude with caller-built options (used by background jobs such as Google Trends)."""
+        feature = _feature_name(sys._getframe(1).f_globals.get("__name__", ""))
         async with sem or self._sem:
             try:
-                return await asyncio.wait_for(self._run(prompt, options), timeout=timeout)
+                return await asyncio.wait_for(self._run(prompt, options, None, feature), timeout=timeout)
             except asyncio.TimeoutError as exc:
                 raise ClaudeCodeError("Claude Code took too long to answer.") from exc
             except ClaudeCodeError:
@@ -407,7 +427,35 @@ class ClaudeCodeService:
                 logger.exception("Unexpected Claude Code failure")
                 raise ClaudeCodeError("Claude Code failed unexpectedly. Check the backend logs.") from exc
 
-    async def _run(self, prompt: str, options: ClaudeAgentOptions) -> str:
+    async def _run(self, prompt: str, options: ClaudeAgentOptions, usage_sink: dict | None = None, feature: str = "App") -> str:
+        """Run one Claude call and report it (who, what feature, tokens, cost, time, failure) to the usage dashboard."""
+        sink: dict = usage_sink if usage_sink is not None else {}
+        started, ok, err = time.monotonic(), False, ""
+        chosen = self.model_override(feature) if self.model_override is not None else None
+        if chosen:  # an admin picked the model for this feature on the Claude Monitor page
+            options = dataclasses.replace(options, model=chosen)
+        self.inflight += 1
+        try:
+            answer = await self._run_inner(prompt, options, sink)
+            ok = True
+            return answer
+        except BaseException as exc:  # noqa: BLE001 - recorded, then re-raised unchanged
+            err = str(exc)
+            raise
+        finally:
+            self.inflight -= 1
+            if self.on_event is not None:
+                try:
+                    env = getattr(options, "env", None) or {}
+                    self.on_event({
+                        "token": env.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"),
+                        "feature": feature, "model": getattr(options, "model", None), "ok": ok, "error": err, "latency": time.monotonic() - started,
+                        "input": sink.get("input", 0), "output": sink.get("output", 0), "cost": sink.get("cost", 0.0),
+                    })
+                except Exception:  # noqa: BLE001 - never let bookkeeping break an answer
+                    logger.exception("Could not record Claude usage")
+
+    async def _run_inner(self, prompt: str, options: ClaudeAgentOptions, usage_sink: dict) -> str:
         chunks: list[str] = []
         final: str | None = None
         async for message in query(prompt=prompt, options=options):
@@ -416,6 +464,13 @@ class ClaudeCodeService:
                 if text:
                     chunks.append(text)
             elif isinstance(message, ResultMessage):
+                if usage_sink is not None:  # report what this question cost, for the usage dashboard
+                    u = getattr(message, "usage", None) or {}
+                    usage_sink.update(
+                        input=int(u.get("input_tokens", 0) or 0) + int(u.get("cache_creation_input_tokens", 0) or 0) + int(u.get("cache_read_input_tokens", 0) or 0),
+                        output=int(u.get("output_tokens", 0) or 0),
+                        cost=float(getattr(message, "total_cost_usd", 0) or 0),
+                    )
                 if message.is_error:
                     detail = _redact(str(message.result or "")).strip()[:300]
                     logger.error("Claude Code returned an error result (%s): %s", message.subtype, detail)

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 
-export type PageId = "assistant" | "trends" | "meetings" | "radar";
+export type PageId = "assistant" | "trends" | "meetings" | "radar" | "claude";
 
 const ICON_PROPS = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true } as const;
 
@@ -18,13 +18,17 @@ const ITEMS: { id: PageId; label: string; hint: string; icon: ReactNode }[] = [
     icon: <svg {...ICON_PROPS}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4.5" /><path d="M12 12l6-6" /></svg>,
   },
   {
+    id: "claude", label: "Claude Monitor", hint: "Spend, usage, limits and alerts for Claude accounts",
+    icon: <svg {...ICON_PROPS}><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></svg>,
+  },
+  {
     id: "trends", label: "Google Trends", hint: "What the world is searching right now",
     icon: <svg {...ICON_PROPS}><path d="M3 17l6-6 4 4 8-8" /><path d="M15 7h6v6" /></svg>,
   },
 ];
 
 /** Microsoft-style left navigation: icon rail that expands to show names. */
-export function SideNav({ page, onSelect }: { page: PageId; onSelect: (p: PageId) => void }) {
+export function SideNav({ page, onSelect, isAdmin = false }: { page: PageId; onSelect: (p: PageId) => void; isAdmin?: boolean }) {
   const [open, setOpen] = useState(() => {
     try { return localStorage.getItem("pra_nav_open") !== "0"; } catch { return true; }
   });
@@ -43,7 +47,7 @@ export function SideNav({ page, onSelect }: { page: PageId; onSelect: (p: PageId
         <svg {...ICON_PROPS}><path d="M4 6h16M4 12h16M4 18h16" /></svg>
       </button>
       <ul className="flex flex-col">
-        {ITEMS.map((it) => {
+        {ITEMS.filter((it) => it.id !== "claude" || isAdmin).map((it) => {
           const active = page === it.id;
           return (
             <li key={it.id}>

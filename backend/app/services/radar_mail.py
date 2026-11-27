@@ -275,11 +275,15 @@ class Mailer:
         return result["access_token"]
 
     async def send(self, report: dict[str, Any]) -> None:
+        await self.send_message(subject(report), render(report, self.page_url), self.recipients)
+
+    async def send_message(self, subject_line: str, html_body: str, recipients: list[str]) -> None:
+        """Send any HTML email from the configured mailbox (used for Claude account notices)."""
         body = {
             "message": {
-                "subject": subject(report),
-                "body": {"contentType": "HTML", "content": render(report, self.page_url)},
-                "toRecipients": [{"emailAddress": {"address": a}} for a in self.recipients],
+                "subject": subject_line,
+                "body": {"contentType": "HTML", "content": html_body},
+                "toRecipients": [{"emailAddress": {"address": a}} for a in recipients],
             },
             "saveToSentItems": True,
         }
@@ -295,4 +299,4 @@ class Mailer:
             if res.status_code == 403:
                 raise RuntimeError("Microsoft refused to send: an admin must approve the Mail.Send permission for Team Pulse. " + why[:160])
             raise RuntimeError(f"Microsoft could not send the email (HTTP {res.status_code}). {why[:160]}")
-        logger.info("Radar email sent to %d people", len(self.recipients))
+        logger.info("Email sent to %d people: %s", len(recipients), subject_line[:60])

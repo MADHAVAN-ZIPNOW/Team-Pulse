@@ -58,6 +58,10 @@ class Settings:
     radar_mail_to: tuple[str, ...] = ()
     radar_page_url: str = ""
     radar_tz: str = "Asia/Kolkata"
+    admin_users: tuple[str, ...] = ()  # ADMIN_EMAILS: may choose the one Claude account the whole app uses
+    claude_notify_to: tuple[str, ...] = ()  # CLAUDE_NOTIFY_TO: who is emailed when the app-wide Claude account changes
+    claude_switch_percent: int = 90  # CLAUDE_SWITCH_PERCENT: move to the next account when the 5-hour or weekly limit reaches this
+    default_claude_account: str = ""  # DEFAULT_CLAUDE_ACCOUNT: which pool account is active after a restart
     radar_dir: str = ""
     radar_watchlist: str = "FastAPI, React, Vite, TypeScript, Python, Docker, Render, Azure DevOps, Microsoft Graph API, Microsoft Entra ID (MSAL), Claude API and Claude Code"
     radar_domains: str = ""  # comma-separated domains the radar covers and the search box offers ("" = the built-in broad list)
@@ -249,6 +253,10 @@ def get_settings() -> Settings:
         az_enabled=_bool("AZ_ENABLED", False) or _auth_mode(os.getenv("AUTH_MODE", "")) == "az_login",
         az_policy=_az_policy(os.getenv("AZ_POLICY", "read")),
         require_user_claude_token=_bool("REQUIRE_USER_CLAUDE_TOKEN", False),
+        admin_users=tuple(u.strip().lower() for u in os.getenv("ADMIN_EMAILS", "").split(",") if u.strip()),
+        claude_notify_to=tuple(a.strip() for a in os.getenv("CLAUDE_NOTIFY_TO", "").split(",") if re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+", a.strip())),
+        claude_switch_percent=min(99, max(50, int(os.getenv("CLAUDE_SWITCH_PERCENT", "90") or 90))),
+        default_claude_account=os.getenv("DEFAULT_CLAUDE_ACCOUNT", "").strip(),
         allowed_users=tuple(u.strip().lower() for u in os.getenv("ALLOWED_USERS", "").split(",") if u.strip()),
         auth_mode=_auth_mode(os.getenv("AUTH_MODE", "")),
     )

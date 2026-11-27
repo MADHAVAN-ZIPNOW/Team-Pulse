@@ -35,7 +35,31 @@ export interface CommentThread {
 export interface AskResponse {
   answer: string; pullRequestId?: number | null; filesAnalyzed: number; filesTotal: number; contextTruncated: boolean;
 }
-export interface ClaudeStatus { required: boolean; hasToken: boolean; source: string; pool: string[] }
+export interface ClaudeStatus { required: boolean; hasToken: boolean; source: string; pool: string[]; activeAccount?: string | null; isAdmin?: boolean }
+export interface ClaudeAccountUsage { name: string; active: boolean; requests: number; errors: number; rateLimited: number; inputTokens: number; outputTokens: number; costUsd: number; lastUsed: number | null; requestsLastHour: number; limits?: { fiveHour: ClaudeWindow | null; sevenDay: ClaudeWindow | null } | null }
+export interface ClaudeWindow { usedPercent: number; resetsAt: number | null; status: string }
+export interface ClaudeTotals { requests: number; tokens: number; cost: number; rateLimited: number; errorRate: number }
+export interface ClaudeLiveAccount extends ClaudeTotals {
+  name: string; pool: boolean; active: boolean; inputTokens: number; outputTokens: number; rateLimited15m: number; lastUsed: number | null
+  status: "Healthy" | "Warning" | "Critical"; health: number; limits?: { fiveHour: ClaudeWindow | null; sevenDay: ClaudeWindow | null } | null
+}
+export interface ClaudeFeatureStat {
+  name: string; calls: number; tokens: number; inputTokens: number; outputTokens: number; cost: number; share: number
+  tokensPerCall: number; costPerCall: number; failRate: number; avgLatency: number; model: string
+}
+export interface ClaudeSwitch { ts: number; from: string | null; to: string | null; reason: string }
+export interface ClaudeDashboard {
+  range: string; totals: ClaudeTotals; previous: ClaudeTotals; active: string | null; since: number
+  series: { ts: number; requests: number; cost: number; input: number; output: number }[]
+  features: ClaudeFeatureStat[]
+  autoSwitch: boolean; switchPercent: number; switchLog: ClaudeSwitch[]; mailTo: string[]
+  featureModels: Record<string, string>; defaultModels: Record<string, string>; models: { id: string; label: string }[]
+  accounts: ClaudeLiveAccount[]
+  jobs: { total: number; ok: number; failed: number; running: number }
+}
+export interface ClaudeUsage {
+  autoSwitch: boolean; switchPercent: number; switchLog: ClaudeSwitch[]; mailTo: string[]
+  features: string[]; featureModels: Record<string, string>; defaultModels: Record<string, string>; models: { id: string; label: string }[]; active: string | null; isAdmin: boolean; accounts: ClaudeLiveAccount[] }
 export interface AzStatus { enabled: boolean; policy: string; policyText: string; signedIn: boolean; user?: string | null; managedByLogin?: boolean }
 export interface ClaudeModel { id: string; label: string; note: string }
 export interface ClaudeModels { models: ClaudeModel[]; default: string }
@@ -135,6 +159,14 @@ export const api = {
   azLogin: () => request<{ code: string; url: string }>("/api/az/login", { method: "POST" }),
   azLogout: () => request<void>("/api/az/login", { method: "DELETE" }),
   claudeStatus: () => request<ClaudeStatus>("/api/claude/status"),
+  claudeDashboard: (range: string, account: string) => request<ClaudeDashboard>(`/api/claude/dashboard?range=${range}&account=${encodeURIComponent(account)}`),
+  setFeatureModel: (feature: string, model: string | null) =>
+    request<void>("/api/claude/feature-model", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ feature, model }) }),
+  setClaudeAuto: (enabled: boolean) =>
+    request<void>("/api/claude/auto", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }),
+  claudeUsage: () => request<ClaudeUsage>("/api/claude/usage"),
+  setActiveClaudeAccount: (account: string | null) =>
+    request<void>("/api/claude/active", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ account }) }),
   claudeModels: () => request<ClaudeModels>("/api/claude/models"),
   saveClaudeToken: (token: string) =>
     request<void>("/api/claude/token", {

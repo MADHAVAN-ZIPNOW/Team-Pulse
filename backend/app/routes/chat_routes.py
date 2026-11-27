@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..auth.dependencies import get_ado_client, get_current_session, require_same_origin
 from ..services.session_store import Session
-from .claude_routes import effective_claude_token
+from .claude_routes import account_label, effective_claude_token
 from ..services.az_policy import AzContext
 from ..azure_devops import models as m
 from ..azure_devops.client import AzureDevOpsClient
@@ -56,7 +56,8 @@ async def ask(
     allowed_models = {i for i, _, _ in settings.claude_models}
     if body.model is not None and body.model not in allowed_models:
         raise HTTPException(status_code=422, detail="That Claude model is not available.")
-    claude_token = effective_claude_token(session, settings)
+    active = request.app.state.claude_usage.active
+    claude_token = effective_claude_token(session, settings, active)
     if settings.require_user_claude_token and not claude_token:
         raise HTTPException(status_code=400, detail="Connect your own Claude account first (paste your Claude token above the chat).")
     org, project, repo, pr_id = body.organization, body.project or "", body.repository, body.pull_request_id
@@ -92,13 +93,28 @@ async def ask(
         az = AzContext(config_dir=session.az_dir, org=org, policy=settings.az_policy)
     server, tool_names = build_azure_server(client, org, project, repo)
     service: ClaudeCodeService = request.app.state.claude
-    try:
-        answer = await service.ask(
+    label = account_label(session, settings, active)
+    sink: dict = {}
+    async def _go(token: str | None) -> str:
+        return await service.ask(
             body.question, context_text, mcp_server=server, azure_tools=tool_names, review_mode=pr_id is not None,
-            oauth_token=claude_token,
+            oauth_token=token,
             az=az,
             model=body.model or settings.claude_models[0][0],
+            usage_sink=sink,
         )
+
+    try:
+        try:
+            answer = await _go(claude_token)
+        except ClaudeCodeError as exc:
+            text = str(exc).lower()
+            usage = request.app.state.claude_usage
+            # The shared account is full: move the whole app to the next account and answer again, so nobody waits or pastes a token.
+            if usage.active and ("limit" in text or "429" in text) and await request.app.state.switcher.check(force=True):
+                answer = await _go(effective_claude_token(session, settings, usage.active))
+            else:
+                raise
     except ClaudeCodeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

@@ -40,6 +40,14 @@ services:
         sync: false
       - key: RADAR_MAIL_TO             # comma-separated recipients
         sync: false
+      - key: SHARED_CLAUDE_TOKENS      # Name=token;Name=token (from `claude setup-token`, one per person)
+        sync: false
+      - key: ADMIN_EMAILS              # who sees the Claude Monitor page and may choose the app-wide account
+        sync: false
+      - key: CLAUDE_NOTIFY_TO          # extra people emailed when the app-wide Claude account changes
+        sync: false
+      - key: DEFAULT_CLAUDE_ACCOUNT    # optional: which account is in use after a restart
+        sync: false
       - key: COOKIE_SECURE
         value: "true"
       - key: MEETING_AGENT_ENABLED

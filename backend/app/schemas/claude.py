@@ -58,4 +58,19 @@ class ClaudeStatus(BaseModel):
     required: bool  # True when each person must connect a Claude account (hosted mode)
     hasToken: bool  # this person has saved their own token
     source: str  # "own" or the label of the shared account currently selected
+    activeAccount: str | None = None  # set by an admin: everyone's questions run on this shared account
+    isAdmin: bool = False
     pool: list[str]  # labels of shared accounts the owner made available (never the tokens)
+
+
+class ClaudeActiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account: Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)] | None = None  # a pool label, or null to let people choose
+
+
+class ClaudeFeatureModelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    feature: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    model: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] | None = None  # a model id, or null for the feature's default

@@ -287,13 +287,16 @@ def _authed_client(app, client):
 def test_claude_token_lifecycle_never_echoed(monkeypatch):
     from app.main import create_app
 
+    monkeypatch.setenv("SHARED_CLAUDE_TOKENS", "")
+    monkeypatch.setenv("ADMIN_EMAILS", "")
+    monkeypatch.setenv("DEFAULT_CLAUDE_ACCOUNT", "")
     monkeypatch.setenv("REQUIRE_USER_CLAUDE_TOKEN", "true")
     get_settings.cache_clear()
     app = create_app()
     with TestClient(app) as client:
         assert client.get("/api/claude/status").status_code == 401  # needs sign-in
         session = _authed_client(app, client)
-        assert client.get("/api/claude/status").json() == {"required": True, "hasToken": False, "source": "own", "pool": []}
+        assert client.get("/api/claude/status").json() == {"required": True, "hasToken": False, "source": "own", "pool": [], "activeAccount": None, "isAdmin": False}
         assert client.put("/api/claude/token", json={"token": "bad"}).status_code == 422
         r = client.put("/api/claude/token", json={"token": GOOD_TOKEN})
         assert r.status_code == 204 and GOOD_TOKEN not in r.text
@@ -353,7 +356,7 @@ def test_switching_accounts_and_effective_token(monkeypatch):
     with TestClient(app) as client:
         session = _authed_client(app, client)
         st = client.get("/api/claude/status")
-        assert st.json() == {"required": True, "hasToken": False, "source": "own", "pool": ["Abinaya"]}
+        assert st.json() == {"required": True, "hasToken": False, "source": "own", "pool": ["Abinaya"], "activeAccount": None, "isAdmin": False}
         assert POOL_TOKEN not in st.text                                   # only labels are ever sent
         assert effective_claude_token(session, settings) is None
         assert client.put("/api/claude/source", json={"source": "Nobody"}).status_code == 422

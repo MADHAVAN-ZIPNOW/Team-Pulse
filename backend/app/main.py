@@ -21,6 +21,8 @@ from .azure_devops.client import AzureDevOpsError
 from .claude.claude_code_service import ClaudeCodeService
 from .config import Settings, get_settings
 from .routes import auth_routes, az_routes, azure_routes, chat_routes, claude_routes, meeting_routes, radar_routes, trends_routes
+from .services.claude_switcher import AccountSwitcher
+from .services.claude_usage import ClaudeUsage, LimitsCache
 from .services.rate_limit import RateLimiter
 from .services.session_store import PendingFlowStore, SessionStore
 from .services.meeting_agent import MeetingAgent
@@ -60,10 +62,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.flows = PendingFlowStore()
     app.state.auth = MicrosoftAuth(settings, app.state.sessions, app.state.flows)
     app.state.claude = ClaudeCodeService(settings.local_repo_path)
+    app.state.claude_limits = LimitsCache()
+    app.state.claude_usage = ClaudeUsage([label for label, _ in settings.shared_claude_tokens], settings.default_claude_account, dict(settings.shared_claude_tokens), running=lambda: app.state.claude.inflight)
+    app.state.claude.model_override = app.state.claude_usage.models.get
     app.state.az_pending = {}  # pending az code sign-ins: id -> (started, private az folder)
     app.state.http = httpx.AsyncClient(
         timeout=httpx.Timeout(30.0, connect=10.0), limits=httpx.Limits(max_connections=20)
     )
+    notify_to = list(dict.fromkeys(a.lower() for a in [*settings.claude_notify_to, *settings.admin_users, *settings.radar_mail_to]))
+    claude_mailer = None
+    if settings.radar_mail_from and settings.tenant_id and settings.client_id and settings.client_secret:
+        claude_mailer = Mailer(settings.tenant_id, settings.client_id, settings.client_secret, settings.radar_mail_from, notify_to, app.state.http)
+    app.state.switcher = AccountSwitcher(
+        app.state.claude_usage, app.state.claude_limits, app.state.http, dict(settings.shared_claude_tokens), claude_mailer, notify_to,
+        settings.claude_switch_percent,
+    )
+    switch_task = asyncio.create_task(app.state.switcher.run_forever()) if settings.shared_claude_tokens else None
+
+    def _on_claude_event(ev: dict) -> None:
+        app.state.claude_usage.record_event(ev)
+        err = (ev.get("error") or "").lower()
+        if not ev.get("ok") and ("429" in err or "limit" in err) and app.state.claude_usage.active:
+            asyncio.get_running_loop().create_task(app.state.switcher.check(force=True))  # a refused call: look at the limits right now
+
+    app.state.claude.on_event = _on_claude_event
     app.state.meetings = None
     app.state.auto = None
     auto_task: asyncio.Task[None] | None = None
@@ -107,6 +129,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if switch_task:
+            switch_task.cancel()
         if radar_task:
             radar_task.cancel()
         if whisper_task:

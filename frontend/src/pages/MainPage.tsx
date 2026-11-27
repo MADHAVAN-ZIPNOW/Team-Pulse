@@ -1,18 +1,26 @@
 import { useEffect, useState } from "react";
-import { DEFAULT_ORG, type AskScope, type User } from "../lib/api";
+import { api, DEFAULT_ORG, type AskScope, type User } from "../lib/api";
 import { Header } from "../components/Header";
 import { ChatPanel } from "../components/ChatPanel";
 import { SideNav, type PageId } from "../components/SideNav";
 import { TrendsPage } from "./TrendsPage";
 import { RadarPage } from "./RadarPage";
+import { useAsync } from "../hooks/useAsync";
 import { MeetingsPage } from "./MeetingsPage";
+import { ClaudeDashboardPage } from "./ClaudeDashboardPage";
 
 export function MainPage({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const [page, setPage] = useState<PageId>(() => (window.location.hash === "#/trends" ? "trends" : window.location.hash === "#/meetings" ? "meetings" : window.location.hash === "#/radar" ? "radar" : "assistant"));
+  const [page, setPage] = useState<PageId>(() => (window.location.hash === "#/trends" ? "trends" : window.location.hash === "#/meetings" ? "meetings" : window.location.hash === "#/radar" ? "radar" : window.location.hash === "#/claude" ? "claude" : "assistant"));
   const selectPage = (p: PageId) => {
     setPage(p);
-    window.history.replaceState(null, "", p === "trends" ? "#/trends" : p === "meetings" ? "#/meetings" : p === "radar" ? "#/radar" : "#/");
+    window.history.replaceState(null, "", p === "trends" ? "#/trends" : p === "meetings" ? "#/meetings" : p === "radar" ? "#/radar" : p === "claude" ? "#/claude" : "#/");
   };
+  // The Claude Monitor dashboard is for admins only (ADMIN_EMAILS on the server).
+  const claudeStatus = useAsync(() => api.claudeStatus(), []);
+  const isAdmin = claudeStatus.data?.isAdmin === true;
+  useEffect(() => {
+    if (page === "claude" && claudeStatus.data && !isAdmin) selectPage("assistant");
+  }, [page, claudeStatus.data, isAdmin]);
   const [view, setView] = useState<"chat">("chat");
   const [welcome, setWelcome] = useState(() => {
     try {
@@ -42,8 +50,10 @@ export function MainPage({ user, onLogout }: { user: User; onLogout: () => void 
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-        <SideNav page={page} onSelect={selectPage} />
-        {page === "radar" ? (
+        <SideNav page={page} onSelect={selectPage} isAdmin={isAdmin} />
+        {page === "claude" ? (!isAdmin ? <main className="flex-1" /> :
+          <main className="min-h-0 min-w-0 flex-1 overflow-hidden"><ClaudeDashboardPage /></main>
+        ) : page === "radar" ? (
           <main className="min-h-0 min-w-0 flex-1 overflow-hidden"><RadarPage /></main>
         ) : page === "trends" ? (
           <main className="min-h-0 min-w-0 flex-1 overflow-hidden"><TrendsPage /></main>
