@@ -461,7 +461,7 @@ function PeopleControl({ accounts, active, reload }: { accounts: ClaudeLiveAccou
           );
         })}
       </ul>
-      {active && <button disabled={busy} onClick={() => run(() => api.setActiveClaudeAccount(null))} className="mt-2 shrink-0 text-left text-[11px] font-semibold text-[#0f6cbd] hover:underline">Stop sharing: let each person choose</button>}
+      {active && <button disabled={busy} onClick={() => run(() => api.setActiveClaudeAccount(null))} className="mt-2 shrink-0 text-left text-[11px] font-semibold text-[#0f6cbd] hover:underline">Choose the best account automatically</button>}
       <p className="mt-1.5 shrink-0 text-[10px] leading-snug text-[#605e5c]">
         Limits are each plan&apos;s real usage (checked about once a minute). Calls, tokens and cost count what this app has run since the server started; cost is the API-price equivalent, not a bill. These choices reset when the server restarts.
       </p>

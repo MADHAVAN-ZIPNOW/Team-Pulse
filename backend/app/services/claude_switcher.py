@@ -76,13 +76,15 @@ class AccountSwitcher:
             await self._apply(old, new, f"{old} reached {cur:.0f}% of its {which} limit", snap, old_used=(cur, which))
             return new
 
-    async def pick_best(self) -> str | None:
-        """Nobody chose an account (a restart wiped the choice): use the shared account with the most room left, silently (no e-mail:
-        servers restart often). Skipped after an admin pressed "Stop sharing"."""
+    async def pick_best(self, force: bool = False) -> str | None:
+        """Use the shared account with the most room left. Without force (the background check after a restart) it is silent and does not
+        shuffle people for a small difference; with force (an admin asked for "automatic") it takes the best account whatever the gap."""
         async with self._lock:
             u = self.usage
-            if u.sharing_off or not self.tokens:
+            if not self.tokens:
                 return None
+            if not force and u.admin_chose:
+                return None  # an admin's pick (or a saved one) stays until an admin or the 90% switch changes it
             snap = await self.snapshot()
             known = [(v, l) for l, (v, _) in snap.items() if v is not None]
             if not known:
@@ -90,7 +92,7 @@ class AccountSwitcher:
             best = min(known)[1]
             if u.active == best:
                 return None
-            if u.active and snap.get(u.active, (None, ""))[0] is not None and snap[u.active][0] < self.percent and snap[u.active][0] <= min(known)[0] + 15:
+            if not force and u.active and snap.get(u.active, (None, ""))[0] is not None and snap[u.active][0] < self.percent and snap[u.active][0] <= min(known)[0] + 15:
                 return None  # the account in use is fine, don't shuffle people around for a small difference
             before = u.active
             u.set_active(best, chosen=False)
@@ -105,9 +107,6 @@ class AccountSwitcher:
         snap = await self.snapshot()
         if new:
             await self._apply(old, new, f"Chosen by {by}", snap, switch=False)
-        else:
-            self._log(old, None, f"Sharing stopped by {by}")
-            await self._mail("Claude accounts: sharing stopped", "<p>An admin stopped sharing one Claude account. Each person now uses their own account again.</p>", snap)
 
     # ------------------------------------------------------------------------------------------------------------
     async def _apply(self, old: str | None, new: str, reason: str, snap, switch: bool = True, old_used: tuple[float, str] | None = None) -> None:

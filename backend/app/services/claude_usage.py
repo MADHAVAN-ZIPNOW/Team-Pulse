@@ -30,17 +30,16 @@ class ClaudeUsage:
         self._by_token = {t: l for l, t in self._tokens.items()}
         self._env_before = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")  # what the server was started with
         self.active: str | None = None
-        self.sharing_off = False  # an admin pressed "Stop sharing": do not pick an account for everyone by itself
         self._state_file = state_file
         saved = self._load()
         self.auto_switch = bool(saved.get("autoSwitch", self.auto_switch))
         self.models = {k: v for k, v in (saved.get("models") or {}).items() if isinstance(k, str) and isinstance(v, str)}
-        self.sharing_off = bool(saved.get("sharingOff", False))
         # Always have an account in use, so nobody is ever asked to paste a token: the admin's saved choice, else the default
         # account, else the first shared account (a better one is picked as soon as the limits are known).
         start = saved.get("active") if saved.get("active") in self._tokens else ""
         start = start or (default_active if default_active in self._tokens else "")
-        if not start and self._tokens and not self.sharing_off:
+        self.admin_chose = bool(start)  # a saved or configured account counts as chosen; the app then keeps it
+        if not start and self._tokens:
             start = next(iter(self._tokens))
         self._apply(start or None)
 
@@ -59,7 +58,7 @@ class ClaudeUsage:
         try:
             tmp = self._state_file + ".tmp"
             with open(tmp, "w", encoding="utf8") as fh:
-                json.dump({"active": self.active, "sharingOff": self.sharing_off, "autoSwitch": self.auto_switch, "models": self.models}, fh)
+                json.dump({"active": self.active, "autoSwitch": self.auto_switch, "models": self.models}, fh)
             os.replace(tmp, self._state_file)
         except OSError:
             log.warning("Could not remember the Claude settings on disk (this server's disk may be read-only).")
@@ -76,10 +75,14 @@ class ClaudeUsage:
         self.save()
 
     def set_active(self, label: str | None, chosen: bool = True) -> None:
-        """An admin's choice (or an automatic switch). label=None means "stop sharing": each person then uses their own token."""
+        """Make one shared account the app-wide one (an admin's choice or an automatic switch). It stays until an admin or the automatic
+        switch changes it. With shared accounts available there is ALWAYS one in use, so label=None changes nothing: nobody is ever left
+        without an account or asked to paste a token."""
+        if label is None and self._tokens:
+            return
         self._apply(label)
         if chosen:
-            self.sharing_off = self.active is None
+            self.admin_chose = True
         self.save()
 
     def _apply(self, label: str | None) -> None:

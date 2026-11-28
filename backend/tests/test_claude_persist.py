@@ -27,19 +27,20 @@ def test_the_admins_choice_and_settings_survive_a_restart(tmp_path):
     assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == "tok-m"  # and the app really runs on that token again
 
 
-def test_stop_sharing_is_remembered_and_nothing_picks_for_everyone_afterwards(tmp_path):
+def test_there_is_never_no_account_so_nobody_is_asked_for_a_token(tmp_path):
     u = make(tmp_path)
-    u.set_active(None)  # admin: "Stop sharing: let each person choose"
-    assert u.active is None and u.sharing_off
-    again = make(tmp_path)
-    assert again.active is None  # still off after a restart
-
-
-def test_choosing_an_account_turns_sharing_back_on(tmp_path):
-    u = make(tmp_path)
-    u.set_active(None)
     u.set_active("Dhamu")
-    assert u.active == "Dhamu" and not u.sharing_off
+    u.set_active(None)  # nothing can switch the app to "no account"
+    assert u.active == "Dhamu"
+    assert make(tmp_path).active == "Dhamu"  # and the admin's pick stays after a restart
+
+
+def test_an_admins_pick_stays_until_an_admin_or_the_automatic_switch_changes_it(tmp_path):
+    u = make(tmp_path)
+    u.set_active("Monika")
+    sw = AccountSwitcher(u, FakeLimits({"Abinaya": 1, "Monika": 50, "Dhamu": 20}), None, dict(TOKENS), None, [], 90)
+    assert asyncio.run(sw.pick_best()) is None and u.active == "Monika"  # the quiet background check leaves a fine choice alone
+    assert asyncio.run(sw.check()) is None and u.active == "Monika"  # 50% is below the 90% switch point
 
 
 def test_a_bad_or_unreadable_state_file_is_ignored(tmp_path):
@@ -78,8 +79,8 @@ def test_pick_best_does_not_shuffle_people_for_a_small_difference(tmp_path):
     assert asyncio.run(sw.pick_best()) is None and u.active == "Abinaya"
 
 
-def test_pick_best_respects_stop_sharing(tmp_path):
+def test_automatic_choice_by_an_admin_takes_the_best_account(tmp_path):
     u = make(tmp_path)
-    u.set_active(None)
-    sw = AccountSwitcher(u, FakeLimits({"Abinaya": 5, "Monika": 50, "Dhamu": 50}), None, dict(TOKENS), None, [], 90)
-    assert asyncio.run(sw.pick_best()) is None and u.active is None
+    u.set_active("Monika")
+    sw = AccountSwitcher(u, FakeLimits({"Abinaya": 40, "Monika": 50, "Dhamu": 20}), None, dict(TOKENS), None, [], 90)
+    assert asyncio.run(sw.pick_best(force=True)) == "Dhamu" and u.active == "Dhamu"

@@ -195,15 +195,21 @@ async def set_active(
     session: Annotated[Session, Depends(get_current_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Response:
-    """Admin only: make one shared account the one the whole app uses (null = let each person choose)."""
+    """Admin only: make one shared account the one the whole app uses. It stays until an admin or the automatic switch changes it.
+    null = pick the account with the most room automatically. There is never "no account": nobody is asked to paste a token."""
     if not is_admin(session, settings):
         raise HTTPException(status_code=403, detail="Only an admin can change the app-wide Claude account.")
     if body.account and body.account not in {label for label, _ in settings.shared_claude_tokens}:
         raise HTTPException(status_code=422, detail="Unknown Claude account.")
     usage = request.app.state.claude_usage
     before = usage.active
-    usage.set_active(body.account or None)
-    await request.app.state.switcher.chosen_by_admin(before, usage.active, session.user.name or session.user.email or "an admin")
+    who = session.user.name or session.user.email or "an admin"
+    if body.account:
+        usage.set_active(body.account)
+        await request.app.state.switcher.chosen_by_admin(before, usage.active, who)
+    else:
+        await request.app.state.switcher.pick_best(force=True)
+        await request.app.state.switcher.chosen_by_admin(before, usage.active, f"{who} (best account, automatic)")
     return Response(status_code=204)
 
 
