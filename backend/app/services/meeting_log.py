@@ -34,7 +34,17 @@ MAX_TRANSCRIPT = 60_000
 
 SYSTEM = "You turn a meeting transcript into rows of a discussion log. Answer with a JSON array only, no other text."
 PROMPT = """This is a transcript of a team meeting held on {date} (speech-to-text, so words may be wrong; it may mix Tamil and English).
-Write what was discussed as rows of a discussion log. Write everything in English.
+Write what was discussed as rows of a discussion log.
+
+LANGUAGE (very important): write ONLY in Tamil script (தமிழ்) and English. NEVER write Tanglish, that is, Tamil words spelled in English letters.
+- What was said in Tamil is written in proper Tamil script. What was said in English is written in English. A mixed discussion may mix both.
+- Technical and product words that people say in English (PBI, API, sprint, Azure DevOps, deployment, release, bug...) stay in English letters inside the Tamil sentence.
+- If the transcript shows Tamil spelled in English letters, understand it and write it in Tamil script.
+- People's names stay as they were said, in English letters.
+- This applies to "topic", "summary", "decision", "next_action" and "owner". Keep "type", "priority", "status" and "due_date" exactly as the English values below,
+  because the Excel sheet uses them as fixed choices.
+- When a row is in Tamil, write its prefix in Tamil too: "யோசனை: " (Idea), "கதை: " (Story), "பிரச்சனை: " (Problem), "கேள்வி: " (Question), "ஆபத்து: " (Risk), "தடை: " (Blocker).
+  When a row is in English, keep "Idea: ", "Story: ", "Problem: ", "Question: ", "Risk: ", "Blocker: ".
 
 Extract ONLY these four things, each as its own row (use only what is in the transcript):
 1. IDEAS: new ideas, improvements, suggestions, creative solutions, product / feature / design / process / business ideas. Topic starts with "Idea: ".

@@ -66,7 +66,13 @@ async def _split(audio: str, workdir: Path, ffmpeg: str) -> list[tuple[Path, flo
 
 async def _send(http: httpx.AsyncClient, path: Path, key: str) -> dict[str, Any]:
     """One audio file to Groq, retrying on rate limits (429), server errors and network problems."""
-    data = {"model": model(), "response_format": "verbose_json", "temperature": "0", "language": os.getenv("WHISPER_LANGUAGE", "en") or "en"}
+    data = {"model": model(), "response_format": "verbose_json", "temperature": "0"}
+    # WHISPER_LANGUAGE: not set = English (the old default); set to a code such as "ta" = that language; set but EMPTY = let Whisper
+    # detect the language itself (best for meetings that mix Tamil and English).
+    language = os.getenv("WHISPER_LANGUAGE")
+    language = "en" if language is None else language.strip()
+    if language:
+        data["language"] = language
     last = ""
     for attempt in range(1, TRIES + 1):
         wait = min(2 ** attempt, 30)
