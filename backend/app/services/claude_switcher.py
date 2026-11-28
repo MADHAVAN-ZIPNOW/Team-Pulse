@@ -76,6 +76,28 @@ class AccountSwitcher:
             await self._apply(old, new, f"{old} reached {cur:.0f}% of its {which} limit", snap, old_used=(cur, which))
             return new
 
+    async def pick_best(self) -> str | None:
+        """Nobody chose an account (a restart wiped the choice): use the shared account with the most room left, silently (no e-mail:
+        servers restart often). Skipped after an admin pressed "Stop sharing"."""
+        async with self._lock:
+            u = self.usage
+            if u.sharing_off or not self.tokens:
+                return None
+            snap = await self.snapshot()
+            known = [(v, l) for l, (v, _) in snap.items() if v is not None]
+            if not known:
+                return None
+            best = min(known)[1]
+            if u.active == best:
+                return None
+            if u.active and snap.get(u.active, (None, ""))[0] is not None and snap[u.active][0] < self.percent and snap[u.active][0] <= min(known)[0] + 15:
+                return None  # the account in use is fine, don't shuffle people around for a small difference
+            before = u.active
+            u.set_active(best, chosen=False)
+            self._log(before, best, "Picked automatically (nobody had chosen an account)")
+            logger.info("App-wide Claude account picked automatically: %s -> %s", before, best)
+            return best
+
     async def chosen_by_admin(self, old: str | None, new: str | None, by: str) -> None:
         """An admin pressed the button: record it and tell people."""
         if new == old:
@@ -150,6 +172,7 @@ class AccountSwitcher:
     async def run_forever(self) -> None:
         while True:
             try:
+                await self.pick_best()
                 await asyncio.sleep(CHECK_EVERY)
                 await self.check()
             except asyncio.CancelledError:

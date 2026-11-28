@@ -218,7 +218,7 @@ async def set_auto(
     """Admin only: turn automatic switching (at the limit) on or off."""
     if not is_admin(session, settings):
         raise HTTPException(status_code=403, detail="Only an admin can change this.")
-    request.app.state.claude_usage.auto_switch = body.enabled
+    request.app.state.claude_usage.set_auto(body.enabled)
     if body.enabled:
         await request.app.state.switcher.check(force=True)
     return Response(status_code=204)
@@ -238,9 +238,5 @@ async def set_feature_model(
         raise HTTPException(status_code=422, detail="Unknown feature.")
     if body.model and body.model not in {i for i, _, _ in settings.claude_models}:
         raise HTTPException(status_code=422, detail="That Claude model is not available.")
-    models = request.app.state.claude_usage.models
-    if body.model:
-        models[body.feature] = body.model
-    else:
-        models.pop(body.feature, None)
+    request.app.state.claude_usage.set_model(body.feature, body.model)
     return Response(status_code=204)

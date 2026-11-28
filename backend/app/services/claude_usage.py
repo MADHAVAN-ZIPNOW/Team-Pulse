@@ -5,16 +5,20 @@ Memory only: counters restart with the server. They measure Team Pulse's own que
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 import time
 from collections import deque
 
 
+log = logging.getLogger("pr_assistant.claude.usage")
+
 FEATURES = ("PR Assistant", "Problem Radar", "Google Trends", "Meetings")
 
 
 class ClaudeUsage:
-    def __init__(self, labels: list[str], default_active: str = "", tokens: dict[str, str] | None = None, running=lambda: 0) -> None:
+    def __init__(self, labels: list[str], default_active: str = "", tokens: dict[str, str] | None = None, running=lambda: 0, state_file: str = "") -> None:
         self.labels = labels
         self.events: deque = deque(maxlen=50_000)
         self.started = time.time()
@@ -26,9 +30,59 @@ class ClaudeUsage:
         self._by_token = {t: l for l, t in self._tokens.items()}
         self._env_before = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")  # what the server was started with
         self.active: str | None = None
-        self.set_active(default_active)
+        self.sharing_off = False  # an admin pressed "Stop sharing": do not pick an account for everyone by itself
+        self._state_file = state_file
+        saved = self._load()
+        self.auto_switch = bool(saved.get("autoSwitch", self.auto_switch))
+        self.models = {k: v for k, v in (saved.get("models") or {}).items() if isinstance(k, str) and isinstance(v, str)}
+        self.sharing_off = bool(saved.get("sharingOff", False))
+        # Always have an account in use, so nobody is ever asked to paste a token: the admin's saved choice, else the default
+        # account, else the first shared account (a better one is picked as soon as the limits are known).
+        start = saved.get("active") if saved.get("active") in self._tokens else ""
+        start = start or (default_active if default_active in self._tokens else "")
+        if not start and self._tokens and not self.sharing_off:
+            start = next(iter(self._tokens))
+        self._apply(start or None)
 
-    def set_active(self, label: str | None) -> None:
+    # -- remembered choices (names and model ids only, never tokens) -------------------------------------------------
+    def _load(self) -> dict:
+        try:
+            with open(self._state_file, encoding="utf8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def save(self) -> None:
+        if not self._state_file:
+            return
+        try:
+            tmp = self._state_file + ".tmp"
+            with open(tmp, "w", encoding="utf8") as fh:
+                json.dump({"active": self.active, "sharingOff": self.sharing_off, "autoSwitch": self.auto_switch, "models": self.models}, fh)
+            os.replace(tmp, self._state_file)
+        except OSError:
+            log.warning("Could not remember the Claude settings on disk (this server's disk may be read-only).")
+
+    def set_auto(self, enabled: bool) -> None:
+        self.auto_switch = enabled
+        self.save()
+
+    def set_model(self, feature: str, model: str | None) -> None:
+        if model:
+            self.models[feature] = model
+        else:
+            self.models.pop(feature, None)
+        self.save()
+
+    def set_active(self, label: str | None, chosen: bool = True) -> None:
+        """An admin's choice (or an automatic switch). label=None means "stop sharing": each person then uses their own token."""
+        self._apply(label)
+        if chosen:
+            self.sharing_off = self.active is None
+        self.save()
+
+    def _apply(self, label: str | None) -> None:
         """Make one account the app-wide one. Every Claude process the app starts (chat, Radar, Trends, Meetings, and any
         feature added later) inherits CLAUDE_CODE_OAUTH_TOKEN from the server's environment, so setting it here covers them all."""
         self.active = label if label in self._tokens else None

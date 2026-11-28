@@ -63,7 +63,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.auth = MicrosoftAuth(settings, app.state.sessions, app.state.flows)
     app.state.claude = ClaudeCodeService(settings.local_repo_path)
     app.state.claude_limits = LimitsCache()
-    app.state.claude_usage = ClaudeUsage([label for label, _ in settings.shared_claude_tokens], settings.default_claude_account, dict(settings.shared_claude_tokens), running=lambda: app.state.claude.inflight)
+    app.state.claude_usage = ClaudeUsage([label for label, _ in settings.shared_claude_tokens], settings.default_claude_account, dict(settings.shared_claude_tokens), running=lambda: app.state.claude.inflight,
+        state_file=os.getenv("CLAUDE_STATE_FILE") or str(Path(settings.session_dir).parent / "claude_control.json"))
     app.state.claude.model_override = app.state.claude_usage.models.get
     app.state.az_pending = {}  # pending az code sign-ins: id -> (started, private az folder)
     app.state.http = httpx.AsyncClient(

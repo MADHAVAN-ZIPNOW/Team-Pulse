@@ -371,7 +371,7 @@ function HealthCard({ a }: { a: ClaudeLiveAccount }) {
   return (
     <Card className="!p-2.5">
       <div className="flex items-center gap-2.5">
-        <Ring value={a.health} color={st.color} />
+        <span title={`Health score (not a fixed number): 100 − 0.6 × ${Math.max(a.limits?.fiveHour?.usedPercent ?? 0, a.limits?.sevenDay?.usedPercent ?? 0).toFixed(0)}% (the fuller of the 5-hour and weekly limits) − ${Math.min(30, a.errorRate * 3).toFixed(0)} for the error rate − ${Math.min(20, a.rateLimited15m * 5)} for recent 429s = ${a.health}`}><Ring value={a.health} color={st.color} /></span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2"><span className="truncate text-[13px] font-semibold">{a.name}</span><StatusBadge s={a.status} /></div>
           <p className="truncate text-[10px] text-[#605e5c]">{a.active ? "Used by the whole app · " : ""}last used {fmtAgo(a.lastUsed)}</p>

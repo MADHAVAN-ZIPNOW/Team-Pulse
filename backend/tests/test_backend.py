@@ -356,7 +356,8 @@ def test_switching_accounts_and_effective_token(monkeypatch):
     with TestClient(app) as client:
         session = _authed_client(app, client)
         st = client.get("/api/claude/status")
-        assert st.json() == {"required": True, "hasToken": False, "source": "own", "pool": ["Abinaya"], "activeAccount": None, "isAdmin": False}
+        # with a shared account available, one is in use for everybody from the start: nobody is asked to paste a token
+        assert st.json() == {"required": False, "hasToken": False, "source": "Abinaya", "pool": ["Abinaya"], "activeAccount": "Abinaya", "isAdmin": False}
         assert POOL_TOKEN not in st.text                                   # only labels are ever sent
         assert effective_claude_token(session, settings) is None
         assert client.put("/api/claude/source", json={"source": "Nobody"}).status_code == 422
